@@ -17,6 +17,8 @@ All notable public releases are documented here.
 - Added global search to the stable traditional-Xposed build.
 - Increased Android version codes for in-channel upgrades while retaining the
   existing v1.7 release asset names.
+- Added a consolidated [1.7 r2 implementation and release record](docs/RELEASE_1.7_R2_PROGRESS.md)
+  with root-cause, verification, checksum, and public-link details.
 
 ### Stable API 102
 

@@ -35,6 +35,10 @@ Use `deekseep-stable-api102-v1.7.apk` with a current LSPosed installation.
 The traditional test APK is the FPA-oriented experimental build and is attached
 as `deekseep-test-legacy-v1.7.apk`; it is not published as a separate release.
 
+The complete implementation, verification, checksum, and publishing record is
+available in the
+[1.7 r2 progress document](https://github.com/haoyangtu09-art/Deekseep/blob/main/docs/RELEASE_1.7_R2_PROGRESS.md).
+
 ## Important
 
 Modern and legacy builds in the same channel share a package ID but use
