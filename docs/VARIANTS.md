@@ -14,7 +14,7 @@ another build.
 | `module/` | `deekseep-stable-api102-v1.7.apk` | Stable | Current LSPosed with libxposed API 102 | `com.dsmod.probe` |
 | `module-inject/` | `deekseep-test-api102-v1.7.apk` | Test | Current LSPosed with libxposed API 102 | `com.dsmod.inject` |
 | `module-legacy/` | `deekseep-stable-legacy-v1.7.apk` | Stable compatibility | FPA or older LSPosed | `com.dsmod.probe` |
-| `module-inject-legacy/` | `deekseep-test-legacy-v1.7.apk` | Test compatibility | FPA or older LSPosed | `com.dsmod.inject` |
+| `module-inject-legacy/` | `deekseep-test-legacy-v1.7.apk` | FPA/test compatibility | FPA or older LSPosed | `com.dsmod.inject` |
 | `module-mtest/` | `deekseep-api102-load-probe-v0.1.apk` | Diagnostic | Current LSPosed with libxposed API 102 | `com.dsmod.mtest` |
 
 ## Feature Matrix
@@ -30,10 +30,12 @@ than the normal native settings overlay.
 | Client response-replacement preservation | Yes | Yes | Yes | Yes |
 | First-run risk disclosure | Yes | Yes | Yes | Yes |
 | Local conversation editor | Yes | Yes | Yes | Yes |
-| Add reasoning to a response with no reasoning fragment | Yes | No | No | No |
-| Automatic malformed-reasoning migration | Yes | No | No | No |
+| Add reasoning to a response with no reasoning fragment | Yes | Yes | Yes | Yes |
+| Custom reasoning duration (`elapsed_secs`) | Yes | Yes | Yes | Yes |
+| Automatic malformed-reasoning migration | Yes | Yes | Yes | Yes |
 | Markdown conversation export | Yes | Yes | No | Yes |
-| Global local-chat search | Yes | Yes | No | Yes |
+| Search user, model, and reasoning text | Yes | Yes | Yes | Yes |
+| Search result opens native DeepSeek conversation | Yes | Yes | Yes | Yes |
 | Conversation statistics | Yes | Yes | No | Yes |
 | Manual and automatic database backup | Yes | Yes | No | Yes |
 | Sidebar multi-select and batch delete | Yes | No | No | Yes |
@@ -48,6 +50,10 @@ than the normal native settings overlay.
 The minimal load probe contains none of the end-user features. It only hooks
 `Activity.onResume`, reports that the modern module loaded, and attempts to write
 a diagnostic marker.
+
+The four complete builds share the editor's reasoning schema and the native
+search-navigation implementation. The traditional test build remains the
+FPA-oriented experimental package and is shipped beside the other v1.7 assets.
 
 ## Modern Interface
 

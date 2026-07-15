@@ -142,6 +142,10 @@ public final class DeekseepTools {
 
     // ── 功能 2：全局搜索聊天记录 ────────────────────────────────────────
     static void showSearch(final Activity act) {
+        ChatSearchUi.show(act);
+    }
+
+    private static void showSearchLegacy(final Activity act) {
         final EditText input = new EditText(act);
         input.setHint("输入关键词");
         LinearLayout wrap = new LinearLayout(act);

@@ -162,6 +162,10 @@ public final class DeekseepTools {
     }
 
     static void showSearch(final Activity act) {
+        ChatSearchUi.show(act);
+    }
+
+    private static void showSearchLegacy(final Activity act) {
         final boolean dark = DeekseepUi.isDark(act);
         final int card = dark ? 0xFF2A2A2D : 0xFFFFFFFF;
         final int text = dark ? 0xFFECECEC : 0xFF1A1A1A;

@@ -58,25 +58,29 @@ process. It reconstructs the current parent chain and supports:
 - user request editing;
 - assistant response or template-response editing;
 - reasoning-fragment editing;
-- creation of reasoning content on a response that originally had none in the
-  stable API 102 build;
+- creation of reasoning content on a response that originally had none;
+- a custom nonnegative reasoning duration stored as the native optional
+  `elapsed_secs` number;
 - viewing multiple local accounts;
-- direct navigation from global search results;
+- native DeepSeek conversation navigation from global search results;
 - Markdown rendering and formatting helpers.
 
 Saved sessions receive a high local cache version to keep a stale server copy
 from immediately overwriting the local edit. This is intentionally invasive:
 create a database backup before editing.
 
-Version 1.7 also repairs legacy malformed `THINK` fragments created by an older
-editor implementation. See [Chat Editor Thinking Fix](CHAT_EDITOR_THINKING_FIX.md).
+Version 1.7 r2 provides the same reasoning writer and malformed-`THINK`
+migration in all four complete builds. See
+[Chat Editor Thinking Fix](CHAT_EDITOR_THINKING_FIX.md).
 
 ## Local Data Tools
 
 The maintained data-tools implementation provides:
 
 - one Markdown file per local conversation;
-- keyword search across local accounts, with a jump to the matching message;
+- keyword search across user requests, assistant responses, and deep-reasoning
+  fragments;
+- native conversation opening through the host's own session controller;
 - totals for sessions, messages, and text volume;
 - immediate database backup;
 - automatic backup at most once every 24 hours;
@@ -84,6 +88,12 @@ The maintained data-tools implementation provides:
 
 Backups are copies of private application data. Protect them like the original
 chat database.
+
+DeepSeek does not expose a public URI for opening an arbitrary existing session.
+Deekseep therefore captures the host session list and click handler while the
+sidebar is composed. A result can open only a conversation available to the
+currently logged-in account's native session list; cross-account hits require
+switching to that account first.
 
 ## Sidebar Multi-Select
 

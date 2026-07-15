@@ -73,7 +73,7 @@ A response with reasoning uses `thinking_enabled=true` and a numeric ID on the
 
 ## Fix
 
-The stable API 102 editor now uses one structured transform,
+All four complete editors now use the same structured transform,
 `upsertFragmentContent()`:
 
 1. repair any old `THINK` object whose ID is missing or nonnumeric;
@@ -87,10 +87,23 @@ The stable API 102 editor now uses one structured transform,
 Using a new unique ID avoids modifying the identity of the original response.
 Array order still places reasoning before the answer.
 
+### Custom Reasoning Duration
+
+The host model represents displayed reasoning time with the optional
+`elapsed_secs: Float` field on the `THINK` fragment. The editor exposes this
+as **Reasoning duration (seconds)** and accepts a finite number greater than or
+equal to zero. It writes a JSON number, not a quoted string. Clearing the field
+removes `elapsed_secs`; it does not remove the reasoning content.
+
+Duration changes use `updateThinkElapsed()`, which first repairs a malformed
+THINK ID and then modifies only the matching reasoning object. The existing
+`RESPONSE`, its ID, its content, and all unrelated fragments remain unchanged.
+
 ## Automatic Migration
 
-At module startup, before the host opens a conversation, the stable API 102
-build scans all local account databases and session message tables.
+At module startup, before the host opens a conversation, each stable/test and
+modern/traditional complete build scans all local account databases and session
+message tables.
 
 The migration:
 
@@ -118,6 +131,9 @@ repairMalformedThinkFragments fixed=N
 - detection of nonempty reasoning;
 - repair of a legacy `THINK` with no ID;
 - idempotence of a second repair pass.
+- numeric `elapsed_secs` insertion and removal;
+- rejection of negative, NaN, and infinite durations;
+- preservation of the response while duration is changed.
 
 Run it after building the stable project:
 
@@ -130,14 +146,19 @@ bash test-thinking-regression.sh
 Expected result:
 
 ```text
-PASS: chat editor THINK JSON transform and legacy repair
+PASS: THINK content/id/duration transforms preserve the response
 ```
 
 ## Scope and Recovery Limit
 
-The "add reasoning to a response with no reasoning fragment" implementation
-exists only in the stable API 102 project, so the code fix and migration are
-intentionally limited to that project.
+The writer and migration are present in:
+
+- `module/` (stable libxposed API 102);
+- `module-inject/` (test libxposed API 102);
+- `module-legacy/` (stable traditional Xposed);
+- `module-inject-legacy/` (FPA/test traditional Xposed).
+
+`module-mtest/` is only an API-load probe and does not contain the editor.
 
 The migration can restore visibility when the original `RESPONSE` still exists
 in the malformed JSON row. It cannot reconstruct response text that a later

@@ -62,12 +62,21 @@ observed it.
 
 ## Added Reasoning and the Answer Both Disappeared
 
-Install stable API 102 v1.7, ensure it is the only active Deekseep hook, and
-force-stop/restart DeepSeek. The startup migration should report a positive
+Install the v1.7 r2 APK matching your framework, ensure it is the only active
+Deekseep hook, and force-stop/restart DeepSeek. Every complete variant now runs
+the startup migration, which should report a positive
 `repairMalformedThinkFragments fixed=N` once and zero later.
 
 If the database row no longer contains the original `RESPONSE`, restore it from
 a database backup.
+
+## A Search Result Does Not Open
+
+Search includes user input, model output, and deep-reasoning fragments. Opening
+uses DeepSeek's native sidebar session controller, so the target conversation
+must belong to the currently logged-in account and be present in its native
+session list. Switch to the account named by the local database and search
+again. Deekseep intentionally does not fall back to its editor for this action.
 
 ## Local Edits Revert
 

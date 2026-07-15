@@ -48,8 +48,9 @@ The stable API 102 project performs the following high-level work:
 5. starts noncritical historical prompt-prefix cleanup in the background;
 6. installs response replacement, message merge, and status hooks;
 7. installs expert feature, transport, proof-of-work, and image-history hooks;
-8. tracks settings navigation and optional sidebar selection;
-9. injects the native Deekseep entry only on the settings route.
+8. captures the host sidebar session list and native session click handler;
+9. tracks settings navigation and optional sidebar selection;
+10. injects the native Deekseep entry only on the settings route.
 
 Failures are generally caught and logged so an unavailable optional hook does
 not prevent the original host method from running.
@@ -110,6 +111,21 @@ The editor uses structured `org.json` transforms and parameterized values for
 content. Dynamic table names originate from discovered session IDs and are
 quoted. The expert image history path reuses the host serializer when object
 fidelity is required.
+
+A `THINK` object requires a numeric `id` and string `content`.
+`elapsed_secs` is optional and numeric. The editor preserves all other
+fragments, allocates a unique ID when creating reasoning, and updates
+`thinking_enabled` with the fragment array.
+
+## Native Conversation Navigation
+
+DeepSeek 2.2.2 has deep links for new/share flows but no supported URI for
+opening an arbitrary existing conversation. The sidebar root composable
+`mc.f` receives both the native `List<tp>` and its `ib3` session-click
+handler. Each complete build captures those objects without changing them.
+Search selection finds the matching `tp.a` session ID and invokes the original
+handler's `g(tp)` method. The Deekseep dialogs close only after that call
+succeeds, revealing the host's normal chat screen.
 
 ## Storage Boundaries
 

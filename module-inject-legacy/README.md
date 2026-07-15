@@ -10,8 +10,11 @@ environments.
 - Public asset: `deekseep-test-legacy-v1.7.apk`
 
 It contains Compose and host message-menu experiments, local data tools,
-sidebar multi-select, and the device-validated legacy implementation of expert
-image relay, parallel multi-image description, and image-fragment restoration.
+sidebar multi-select, and the FPA-oriented expert image-relay experiments. The
+v1.7 r2 build includes the shared reasoning creator, editable reasoning
+duration, reasoning-aware search, and native chat opening. Parallel multi-image
+description and history image-fragment restoration remain experimental; see the
+feature documentation for their current validation status.
 
 ```bash
 cd module-inject-legacy

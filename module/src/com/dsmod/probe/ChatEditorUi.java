@@ -162,7 +162,13 @@ public final class ChatEditorUi {
 
     // ── 数据模型 ─────────────────────────────────────────────
     static final class Session { String id; String title; String dbPath; String account; }
-    static final class Msg { long id; String role; String think = ""; String body = ""; }
+    static final class Msg {
+        long id;
+        String role;
+        String think = "";
+        String body = "";
+        Float thinkElapsedSecs;
+    }
 
     // 可编辑字段（消息正文 / 思考 / 标题），批量保存时逐个比对提交
     static final class Field {
@@ -341,7 +347,16 @@ public final class ChatEditorUi {
                 if (o == null) continue;
                 String type = o.optString("type");
                 String content = o.optString("content");
-                if ("THINK".equals(type)) { if (think.length() > 0) think.append("\n\n"); think.append(content); }
+                if ("THINK".equals(type)) {
+                    if (think.length() > 0) think.append("\n\n");
+                    think.append(content);
+                    if (m.thinkElapsedSecs == null && !o.isNull("elapsed_secs")) {
+                        double elapsed = o.optDouble("elapsed_secs", Double.NaN);
+                        if (!Double.isNaN(elapsed) && !Double.isInfinite(elapsed) && elapsed >= 0) {
+                            m.thinkElapsedSecs = Float.valueOf((float) elapsed);
+                        }
+                    }
+                }
                 else if ("RESPONSE".equals(type)) resp = content;
                 else if ("TEMPLATE_RESPONSE".equals(type)) tmpl = content;
                 else if ("REQUEST".equals(type)) req = content;
@@ -409,6 +424,38 @@ public final class ChatEditorUi {
         return false;
     }
 
+    static Float parseThinkElapsed(String text) {
+        String value = text == null ? "" : text.trim();
+        if (value.length() == 0) return null;
+        float seconds = Float.parseFloat(value);
+        if (Float.isNaN(seconds) || Float.isInfinite(seconds) || seconds < 0) {
+            throw new NumberFormatException("elapsed_secs must be a finite non-negative number");
+        }
+        return Float.valueOf(seconds);
+    }
+
+    static String formatThinkElapsed(Float seconds) {
+        if (seconds == null) return "";
+        float value = seconds.floatValue();
+        long rounded = Math.round(value);
+        if (Math.abs(value - rounded) < 0.0001f) return String.valueOf(rounded);
+        return String.valueOf(value);
+    }
+
+    // elapsed_secs 是 DeepSeek ThinkFragment 的可选 Float 字段，空输入表示移除自定义用时。
+    static JSONArray updateThinkElapsed(JSONArray fragments, Float elapsed)
+            throws org.json.JSONException {
+        repairMissingThinkFragmentIds(fragments);
+        for (int i = 0; i < fragments.length(); i++) {
+            JSONObject fragment = fragments.optJSONObject(i);
+            if (fragment == null || !"THINK".equals(fragment.optString("type"))) continue;
+            if (elapsed == null) fragment.remove("elapsed_secs");
+            else fragment.put("elapsed_secs", elapsed.doubleValue());
+            return fragments;
+        }
+        return null;
+    }
+
     // 纯 JSON 变换，数据库保存和回归测试共用，避免两套“新增 THINK”规则漂移。
     static JSONArray upsertFragmentContent(JSONArray fragments, String role, String kind, String text)
             throws org.json.JSONException {
@@ -455,7 +502,12 @@ public final class ChatEditorUi {
         } finally { if (c != null) c.close(); }
         if (frag == null) return false;
         try {
-            JSONArray a = upsertFragmentContent(new JSONArray(frag), role, kind, text);
+            JSONArray a;
+            if ("THINK_TIME".equals(kind)) {
+                a = updateThinkElapsed(new JSONArray(frag), parseThinkElapsed(text));
+            } else {
+                a = upsertFragmentContent(new JSONArray(frag), role, kind, text);
+            }
             if (a == null) return false;
             if (hasThinkContent(a)) {
                 db.execSQL("UPDATE '" + t + "' SET fragments=?, thinking_enabled=1 WHERE message_id=?",
@@ -1079,7 +1131,9 @@ public final class ChatEditorUi {
             // 助手消息一律显示思考区：即使原本没有思考内容（未开深度思考），也能长按创建。
             if (!user) {
                 final boolean hasThink = m.think != null && m.think.trim().length() > 0;
-                final String label = hasThink ? "已思考" : "添加思考内容";
+                String elapsedLabel = formatThinkElapsed(m.thinkElapsedSecs);
+                final String label = (hasThink ? "已思考" : "添加思考内容")
+                        + (elapsedLabel.length() > 0 ? (" · " + elapsedLabel + " 秒") : "");
                 final TextView head = new TextView(act);
                 head.setText("\u25B8 " + label);
                 head.setTextColor(sub); head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
@@ -1098,7 +1152,6 @@ public final class ChatEditorUi {
                 think.setPadding(dp(12), dp(10), dp(12), dp(10));
                 think.setFocusable(false); think.setFocusableInTouchMode(false); think.setCursorVisible(false);
                 think.setLongClickable(true);
-                think.setVisibility(hasThink ? View.GONE : View.VISIBLE);   // 空思考默认展开，方便直接创建
                 final Field tf = registerField(think, "THINK", m.role, m.id, m.think == null ? "" : m.think, tb, sub, sub, thinkEdit);
                 think.setOnLongClickListener(new View.OnLongClickListener() {
                     public boolean onLongClick(View v) {
@@ -1106,10 +1159,53 @@ public final class ChatEditorUi {
                         beginEdit(tf); return true;
                     } });
 
+                LinearLayout thinkArea = new LinearLayout(act);
+                thinkArea.setOrientation(LinearLayout.VERTICAL);
+                thinkArea.setVisibility(hasThink ? View.GONE : View.VISIBLE);
+                thinkArea.addView(think, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                LinearLayout elapsedRow = new LinearLayout(act);
+                elapsedRow.setOrientation(LinearLayout.HORIZONTAL);
+                elapsedRow.setGravity(Gravity.CENTER_VERTICAL);
+                TextView elapsedCaption = new TextView(act);
+                elapsedCaption.setText("思考用时（秒）");
+                elapsedCaption.setTextColor(sub);
+                elapsedCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                elapsedRow.addView(elapsedCaption, new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+                final EditText elapsed = new EditText(act);
+                elapsed.setHint("例如 12.5");
+                elapsed.setTextColor(sub); elapsed.setHintTextColor(sub);
+                elapsed.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                elapsed.setSingleLine(true);
+                elapsed.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+                GradientDrawable eb = new GradientDrawable();
+                eb.setColor(thinkBg); eb.setCornerRadius(dp(8));
+                elapsed.setBackground(eb);
+                elapsed.setPadding(dp(10), dp(6), dp(10), dp(6));
+                elapsed.setFocusable(false); elapsed.setFocusableInTouchMode(false);
+                elapsed.setCursorVisible(false); elapsed.setLongClickable(true);
+                final Field ef = registerField(elapsed, "THINK_TIME", m.role, m.id,
+                        formatThinkElapsed(m.thinkElapsedSecs), eb, sub, sub, thinkEdit);
+                elapsed.setOnLongClickListener(new View.OnLongClickListener() {
+                    public boolean onLongClick(View v) {
+                        if (ef.et.isFocusable()) return false;
+                        beginEdit(ef); return true;
+                    } });
+                LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(dp(104),
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+                elapsedRow.addView(elapsed, elp);
+                LinearLayout.LayoutParams erp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                erp.topMargin = dp(6);
+                thinkArea.addView(elapsedRow, erp);
+
                 head.setOnClickListener(new View.OnClickListener() {
                     public void onClick(View v) {
-                        boolean showing = think.getVisibility() == View.VISIBLE;
-                        think.setVisibility(showing ? View.GONE : View.VISIBLE);
+                        boolean showing = thinkArea.getVisibility() == View.VISIBLE;
+                        thinkArea.setVisibility(showing ? View.GONE : View.VISIBLE);
                         head.setText((showing ? "\u25B8 " : "\u25BE ") + label);
                     }
                 });
@@ -1120,7 +1216,7 @@ public final class ChatEditorUi {
                 LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 blp.topMargin = dp(4);
-                msgContainer.addView(think, blp);
+                msgContainer.addView(thinkArea, blp);
             }
 
             // 永远隐藏 user 正文里注入的 <system>…</system> 前缀，只显示用户真实输入；
@@ -1185,7 +1281,7 @@ public final class ChatEditorUi {
             if (f.render) f.et.setText(f.original);   // 进入编辑态显示 Markdown 源码而非渲染结果
             GradientDrawable hl = new GradientDrawable();
             hl.setColor(f.hlColor);
-            hl.setCornerRadius(dp("TITLE".equals(f.kind) ? 8 : 16));
+            hl.setCornerRadius(dp(("TITLE".equals(f.kind) || "THINK_TIME".equals(f.kind)) ? 8 : 16));
             f.et.setBackground(hl);
             f.et.setTextColor(f.hlText);
             f.et.setFocusable(true); f.et.setFocusableInTouchMode(true); f.et.setCursorVisible(true);
@@ -1196,6 +1292,32 @@ public final class ChatEditorUi {
 
         void saveAll() {
             if (sessDb == null || curSid == null) return;
+            for (Field f : fields) {
+                if (!"THINK_TIME".equals(f.kind)) continue;
+                String cur = f.et.getText().toString();
+                if (cur.equals(f.original)) continue;
+                try {
+                    Float elapsed = parseThinkElapsed(cur);
+                    if (elapsed != null) {
+                        boolean hasContent = false;
+                        for (Field candidate : fields) {
+                            if ("THINK".equals(candidate.kind) && candidate.msgId == f.msgId
+                                    && candidate.et.getText().toString().trim().length() > 0) {
+                                hasContent = true;
+                                break;
+                            }
+                        }
+                        if (!hasContent) {
+                            Toast.makeText(act, "请先输入思考内容，再设置思考用时", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                    }
+                }
+                catch (Throwable ignored) {
+                    Toast.makeText(act, "思考用时必须是大于或等于 0 的秒数", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+            }
             int n = 0;
             for (Field f : fields) {
                 String cur = f.et.getText().toString();

@@ -12,7 +12,8 @@ separate from the recommended stable package.
 Its defining experiments are direct Compose settings-row injection and an item
 added to the host's long-press message menu. It also contains core prompt,
 response, editor, and local data tools, but not every feature from the stable
-modern project.
+modern project. The v1.7 r2 build includes the shared reasoning creator,
+editable reasoning duration, reasoning-aware search, and native chat opening.
 
 ```bash
 cd module-inject

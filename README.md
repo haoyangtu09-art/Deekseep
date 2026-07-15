@@ -44,6 +44,11 @@ conflicting hooks and is not supported.
 
 Checksums are published with every release in `SHA256SUMS.txt`.
 
+The current files are the **v1.7 r2 maintenance builds**. All four complete
+variants now share reasoning creation, custom reasoning duration, reasoning-aware
+search, and native conversation navigation. They replace the earlier v1.7 APKs
+on the same release page; no separate release is required.
+
 ## Main Features
 
 - Native Deekseep entry attached to the DeepSeek settings screen.
@@ -51,10 +56,13 @@ Checksums are published with every release in `SHA256SUMS.txt`.
 - Preservation of already-streamed answers when a later client update attempts
   to replace them with a `CONTENT_FILTER` template.
 - Local chat editor for titles, user messages, assistant responses, and reasoning
-  fragments, with Markdown viewing and formatting helpers.
-- Automatic repair for the malformed reasoning-fragment bug fixed in v1.7.
-- Cross-account conversation search, Markdown export, statistics, manual backup,
-  and rotating automatic database backup.
+  fragments, including creation of a missing reasoning chain and a custom
+  `elapsed_secs` duration.
+- Automatic repair for malformed reasoning fragments in every complete build.
+- Search across user input, model output, and deep-reasoning text. A result opens
+  the matching conversation in DeepSeek's native chat screen.
+- Cross-account Markdown export, statistics, manual backup, and rotating
+  automatic database backup where provided by the selected variant.
 - Optional sidebar multi-select and batch deletion.
 - Expert feature-flag experiments and image-to-text relay through the vision
   model, including multi-image parallel processing and local image metadata
@@ -119,8 +127,8 @@ export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
 bash scripts/build-all.sh
 ```
 
-The command builds all five variants, runs the reasoning-fragment regression
-test, and writes renamed release files plus checksums to `dist/`. The scripts
+The command builds all five variants, runs the reasoning ID/content/duration
+regression test, and writes renamed release files plus checksums to `dist/`. The scripts
 also support Termux/ARM and discover its native `aapt2`, `zipalign`, and
 `apksigner` tools automatically.
 

@@ -27,8 +27,9 @@ deekseep-stable-legacy-v1.7.apk
 ```
 
 Use a test build only when you explicitly need Compose injection, the host
-long-press edit experiment, or the legacy expert relay track. Use the load probe
-only to diagnose modern API loading.
+long-press edit experiment, or the FPA/legacy expert relay track. The FPA test
+APK is `deekseep-test-legacy-v1.7.apk` on the same v1.7 release page. Use the
+load probe only to diagnose modern API loading.
 
 See [Build Variants](VARIANTS.md) for the full comparison.
 
@@ -85,10 +86,11 @@ The same rule applies to the two `com.dsmod.inject` test builds.
 
 ## Upgrading from the Broken Reasoning Writer
 
-Version 1.7 stable API 102 automatically scans local assistant rows for a
+Version 1.7 r2 does this in all four complete variants: stable/test API 102 and
+stable/FPA-test traditional Xposed. Each scans local assistant rows for a
 `THINK` fragment without a numeric `id`.
 
-1. Install the stable API 102 v1.7 build.
+1. Install the v1.7 r2 build matching your framework.
 2. Confirm it is the only enabled Deekseep hook.
 3. Force-stop and restart DeepSeek.
 4. Open the affected conversation.
@@ -96,6 +98,11 @@ Version 1.7 stable API 102 automatically scans local assistant rows for a
 The migration preserves the original response and gives the malformed reasoning
 fragment a unique ID. A diagnostic line reports
 `repairMalformedThinkFragments fixed=N`. A later launch should report zero.
+
+The r2 APKs have higher Android version codes than the first v1.7 files, so an
+in-channel update with the same signing key can install over them. Switching
+between modern and traditional interfaces still requires uninstalling because
+those tracks use different keys.
 
 ## Rollback
 

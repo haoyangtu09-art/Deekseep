@@ -162,6 +162,10 @@ public class Main implements IXposedHookLoadPackage {
     private static final String SETTINGS_CLASS = "u25";
     private static final String SETTINGS_METHOD = "i";
 
+    // Captured from mc.f: DeepSeek's complete native session list and its own click handler.
+    private static volatile Object NATIVE_SESSION_LIST;
+    private static volatile Object NATIVE_SESSION_CLICK;
+
     private final Handler main = new Handler(Looper.getMainLooper());
     private WeakReference<Activity> curAct = new WeakReference<>(null);
     private WeakReference<TextView> btn = new WeakReference<>(null);
@@ -367,6 +371,12 @@ public class Main implements IXposedHookLoadPackage {
         // ★ 原版左侧对话列表：长按改为批量删除面板
         hookSidebarMultiSelectDelete(cl);
         hookSidebarToggleCleanup(cl);
+        hookNativeSessionNavigator(cl);
+
+        try {
+            int n = ChatEditorUi.repairMalformedThinkFragmentsAllSessions();
+            log("repairMalformedThinkFragments fixed=" + n);
+        } catch (Throwable t) { log("repairMalformedThinkFragments err: " + t); }
 
         // ★ 启动时清理历史注入的 <system> 前缀，避免重开后泄露到真实对话（UI 加载前跑）
         new Thread(new Runnable() { public void run() {
@@ -3909,6 +3919,82 @@ public class Main implements IXposedHookLoadPackage {
     }
 
     // ── 设置页入口生命周期 ─────────────────────────────────────────
+
+    private void hookNativeSessionNavigator(final ClassLoader cl) {
+        try {
+            Class<?> mc = cl.loadClass("mc");
+            Class<?> ib3 = cl.loadClass("ib3");
+            int installed = 0;
+            for (Method method : mc.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if (!"f".equals(method.getName()) || types.length != 13) continue;
+                if (!List.class.isAssignableFrom(types[0]) || !ib3.isAssignableFrom(types[4])) continue;
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam param) {
+                        try {
+                            if (param.args[0] instanceof List && param.args[4] != null) {
+                                NATIVE_SESSION_LIST = param.args[0];
+                                NATIVE_SESSION_CLICK = param.args[4];
+                            }
+                        } catch (Throwable t) { log("capture native session navigator failed: " + t); }
+                    }
+                });
+                installed++;
+            }
+            log("installed native session navigator hook mc.f x" + installed);
+        } catch (Throwable t) { log("hookNativeSessionNavigator failed: " + t); }
+    }
+
+    static boolean openNativeSession(String sid) {
+        if (sid == null || sid.length() == 0) return false;
+        Object sessions = NATIVE_SESSION_LIST;
+        Object click = NATIVE_SESSION_CLICK;
+        if (!(sessions instanceof List) || click == null) {
+            log("native session navigation unavailable: host sidebar state not captured");
+            return false;
+        }
+        try {
+            for (Object session : (List) sessions) {
+                Object id = readHostField(session, "a");
+                if (!sid.equals(String.valueOf(id))) continue;
+                if (invokeHostOneArg(click, session)) {
+                    log("native session navigation sid=" + sid);
+                    return true;
+                }
+                break;
+            }
+        } catch (Throwable t) {
+            log("native session navigation failed: " + t);
+        }
+        return false;
+    }
+
+    private static Object readHostField(Object target, String name) {
+        if (target == null) return null;
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(target);
+            } catch (Throwable ignored) {}
+        }
+        return null;
+    }
+
+    private static boolean invokeHostOneArg(Object action, Object value) {
+        if (action == null) return false;
+        for (Class<?> type = action.getClass(); type != null; type = type.getSuperclass()) {
+            for (Method method : type.getDeclaredMethods()) {
+                if (!"g".equals(method.getName()) || method.getParameterTypes().length != 1) continue;
+                try {
+                    method.setAccessible(true);
+                    method.invoke(action, value);
+                    return true;
+                } catch (Throwable ignored) {}
+            }
+        }
+        return false;
+    }
 
     private void hookSettingsNavigation(ClassLoader cl) {
         try {

@@ -10,8 +10,10 @@ channel, intended for FPA and older framework environments.
 - Public asset: `deekseep-stable-legacy-v1.7.apk`
 
 It contains the stable core prompt, response-preservation, settings, and local
-editor paths. It is a compatibility subset and does not contain every feature
-from the modern stable project.
+editor paths. The v1.7 r2 build also provides reasoning creation and duration,
+malformed-reasoning migration, and reasoning-aware search that opens the native
+DeepSeek conversation. It remains a compatibility subset and does not contain
+every feature from the modern stable project.
 
 ```bash
 cd module-legacy

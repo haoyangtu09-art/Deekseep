@@ -23,6 +23,7 @@ import android.widget.TextView;
 public final class DeekseepUi {
 
     static final int BRAND = 0xFF4D6BFE;
+    private static volatile Dialog activePageDialog;
 
     static int dp(Context c, float v) {
         return Math.round(TypedValue.applyDimension(
@@ -32,6 +33,14 @@ public final class DeekseepUi {
     static boolean isDark(Context c) {
         return (c.getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    static void dismissForNativeNavigation() {
+        Dialog dialog = activePageDialog;
+        activePageDialog = null;
+        if (dialog != null) {
+            try { dialog.dismiss(); } catch (Throwable ignored) {}
+        }
     }
 
     /** 右上角的文字入口 "Deekseep"（无背景）。 */
@@ -75,6 +84,12 @@ public final class DeekseepUi {
                 ViewGroup.LayoutParams.MATCH_PARENT, barH + statusTop));
 
         final Dialog dlg = new Dialog(act, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        activePageDialog = dlg;
+        dlg.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {
+            public void onDismiss(android.content.DialogInterface ignored) {
+                if (activePageDialog == dlg) activePageDialog = null;
+            }
+        });
 
         TextView back = new TextView(act);
         back.setText("\u2039");
@@ -415,8 +430,8 @@ public final class DeekseepUi {
         editLabels.addView(editLabel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView editDesc = new TextView(act);
-        editDesc.setText("打开仿 DeepSeek 的编辑器，长按任意消息即可修改你发的或模型回复的内容"
-                + "（改后重启 DeepSeek 生效）。");
+        editDesc.setText("长按可修改用户输入、模型回答和思考内容；没有思考链时可新增，"
+                + "并可自定义思考用时（改后重启 DeepSeek 生效）。");
         editDesc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         editDesc.setTextColor(subColor);
         LinearLayout.LayoutParams edlp = new LinearLayout.LayoutParams(
@@ -449,9 +464,9 @@ public final class DeekseepUi {
 
         card.addView(makeDivider(act, divColor));
         card.addView(toolActionRow(act, "全局搜索聊天记录",
-                "输入关键词，跨全部本地会话检索命中的消息片段。",
+                "检索用户输入、模型回答和深度思考内容，点击进入原生会话。",
                 textColor, subColor, new View.OnClickListener() {
-                    public void onClick(View v) { DeekseepTools.showSearch(act); }
+                    public void onClick(View v) { ChatSearchUi.show(act); }
                 }));
 
         card.addView(makeDivider(act, divColor));

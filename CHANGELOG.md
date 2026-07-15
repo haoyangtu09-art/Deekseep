@@ -4,6 +4,20 @@ All notable public releases are documented here.
 
 ## 1.7 - 2026-07-15
 
+### Maintenance update r2
+
+- Synchronized reasoning creation and malformed-fragment migration across the
+  stable/test and modern/legacy complete variants.
+- Added editable reasoning duration backed by the host's numeric
+  `elapsed_secs` field.
+- Expanded global search to index user input, model output, and deep-reasoning
+  content.
+- Changed search-result navigation to call DeepSeek's captured native session
+  controller instead of opening the Deekseep editor.
+- Added global search to the stable traditional-Xposed build.
+- Increased Android version codes for in-channel upgrades while retaining the
+  existing v1.7 release asset names.
+
 ### Stable API 102
 
 - Added an advanced local conversation editor with title, user-message,

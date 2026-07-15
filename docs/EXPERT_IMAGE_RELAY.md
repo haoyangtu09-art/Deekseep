@@ -7,10 +7,12 @@ Expert image relay is an experimental feature in:
 - the stable API 102 project; and
 - the legacy test project.
 
-The relay, multi-image flow, and history image restoration were device-validated
-on the legacy experimental track on 2026-07-12, then ported to the current
-modern stable source. It remains version-sensitive and is not a promise that the
-service will accept expert features on every account or future app version.
+The relay and multi-image flow were device-validated on the legacy experimental
+track on 2026-07-12, then ported to the current modern stable source. The current
+send-point capture design for history image restoration builds successfully but
+still requires device validation. None of these experimental paths promises
+that the service will accept expert features on every account or future app
+version.
 
 ## Problem
 
@@ -73,7 +75,7 @@ The server stores the expert request as rewritten text with no attached image.
 Without extra handling, reopening an online conversation can replace the local
 image-bearing message with that text-only server history.
 
-The module therefore:
+The current, not-yet-device-validated restoration path therefore:
 
 1. captures complete image file metadata before request rewriting;
 2. serializes an image-only `FILE` fragment per real session;
@@ -107,6 +109,8 @@ ordinary default or vision conversations are not modified.
 - Extra network requests increase latency and data use.
 - Multiple images are bounded by relay timeouts.
 - A changed server history format can disable restoration.
+- History image restoration may still fail because its current send-point
+  persistence path has not completed device validation.
 - Diagnostic logs can contain sensitive prompt and file information.
 
 ## Diagnostics
