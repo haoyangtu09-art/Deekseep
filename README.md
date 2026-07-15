@@ -137,7 +137,6 @@ and compile-only Xposed API boundaries.
 
 ## Documentation
 
-- [1.7 r2 implementation and release record](docs/RELEASE_1.7_R2_PROGRESS.md)
 - [Feature reference](docs/FEATURES.md)
 - [Variant matrix](docs/VARIANTS.md)
 - [Installation](docs/INSTALLATION.md)
