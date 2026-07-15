@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.dsmod.mtest"
+    android:versionCode="2"
+    android:versionName="0.1-api102-probe">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <application
+        android:label="MTest-Modern"
+        android:description="@string/moddesc"
+        android:allowBackup="false">
+    </application>
+</manifest>

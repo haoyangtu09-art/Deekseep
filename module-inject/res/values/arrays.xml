@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="xposedscope">
+        <item>com.deepseek.chat</item>
+        <item>com.dsmod.inject</item>
+    </string-array>
+</resources>

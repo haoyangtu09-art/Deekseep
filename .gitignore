@@ -1,0 +1,38 @@
+# Android build products and local signing material
+**/build/
+dist/
+*.apk
+*.idsig
+*.keystore
+*.jks
+**/src/**/BuildInfo.java
+
+# Local reverse-engineering inputs and generated output
+ds.apk
+ds-*.apk
+apk-full/
+apktool-out/
+unzip/
+jadx-out/
+jadx-installed/
+jadx-222/
+dsnames.txt
+apktool*.log
+jadx.log
+libxposed/
+module/src.bak-*/
+
+# Device data, diagnostics, and local notes
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.log
+PROGRESS_expert_unlock.md
+FIX_chat_editor_add_thinking.md
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.swp
+.DS_Store

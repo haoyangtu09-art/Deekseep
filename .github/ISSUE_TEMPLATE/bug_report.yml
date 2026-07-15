@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a reproducible Deekseep module problem
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove prompts, responses, account/session IDs, file URLs, and credentials before submitting.
+  - type: dropdown
+    id: variant
+    attributes:
+      label: Variant
+      options:
+        - Stable API 102
+        - Test API 102
+        - Stable legacy
+        - Test legacy
+        - API 102 load probe
+    validations:
+      required: true
+  - type: input
+    id: deepseek
+    attributes:
+      label: DeepSeek version
+      placeholder: "2.2.2 (versionCode 233)"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Android and framework
+      placeholder: "Android 15, LSPosed build ..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Minimal redacted log excerpt
+      description: Do not upload a database or complete response log.
