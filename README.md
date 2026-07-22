@@ -5,7 +5,19 @@
 [![Android 7+](https://img.shields.io/badge/Android-7.0%2B-3ddc84)](https://developer.android.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Deekseep is an unofficial Xposed module toolkit for the DeepSeek Android client.
+> [!IMPORTANT]
+> **兼容性限制 / Compatibility limit**
+>
+> Deekseep 目前仅适配 **DeepSeek Android 中国大陆渠道版**，**不适配
+> Google Play / 国际版**。请勿在 Google Play 版上安装或启用本模块；其内部实现
+> 与混淆符号可能不同，相关 Hook 和数据功能无法保证工作。
+>
+> Deekseep currently supports only the **mainland-China distribution** of the
+> DeepSeek Android app. The **Google Play / international build is not
+> supported**. Do not install or enable this module for the Google Play build.
+
+Deekseep is an unofficial Xposed module toolkit for the mainland-China
+distribution of the DeepSeek Android client.
 It provides a stable native settings entry, prompt injection, response-preservation
 hooks, local conversation tools, an advanced chat editor, database backup, and
 experimental expert-mode image relay. Both stable 1.7.1 builds also provide a
@@ -85,12 +97,14 @@ See the [stable interface guide](docs/VARIANTS.md) and dedicated
 
 ## Compatibility
 
+- Supported DeepSeek channel: official mainland-China Android distribution only.
+- Unsupported DeepSeek channel: Google Play / international Android build.
 - Module minimum Android version: Android 7.0 / API 24.
 - Modern interface: libxposed API 102, metadata under `META-INF/xposed/`.
 - Legacy interface: traditional Xposed API 82+, entry under `assets/xposed_init`.
 - Target application package: `com.deepseek.chat`.
 - The current modern symbol map and chat-fragment fix were checked against
-  DeepSeek Android 2.2.2 (`versionCode 233`).
+  the mainland-China DeepSeek Android 2.2.2 build (`versionCode 233`).
 
 Most hooks target R8-obfuscated classes. A DeepSeek update can rename those
 classes without notice. Treat version compatibility as build-specific, not as a
@@ -98,14 +112,16 @@ permanent guarantee.
 
 ## Quick Installation
 
-1. Back up the DeepSeek chat database.
-2. Download exactly one release variant from the table above.
-3. Install it and enable it in the matching Xposed framework.
-4. Select `com.deepseek.chat` in scope. Modern libxposed does not require or
+1. Confirm that DeepSeek is the mainland-China Android build, not the Google
+   Play / international build.
+2. Back up the DeepSeek chat database.
+3. Download exactly one release variant from the table above.
+4. Install it and enable it in the matching Xposed framework.
+5. Select `com.deepseek.chat` in scope. Modern libxposed does not require or
    support self-hooking the module application.
-5. Force-stop and restart DeepSeek.
-6. Accept the first-run risk disclosure.
-7. Open DeepSeek Settings and select the injected **Deekseep** entry.
+6. Force-stop and restart DeepSeek.
+7. Accept the first-run risk disclosure.
+8. Open DeepSeek Settings and select the injected **Deekseep** entry.
 
 FPA packaging, signature switching, activation checks, and recovery steps are
 covered in [Installation](docs/INSTALLATION.md).

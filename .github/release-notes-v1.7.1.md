@@ -13,6 +13,13 @@ The two APKs share the package ID `com.dsmod.probe` and may use different
 signing keys. Disable and uninstall one before switching interfaces. Enable
 only one Deekseep implementation for DeepSeek.
 
+## Compatibility Notice
+
+Deekseep 1.7.1 currently supports only the **mainland-China distribution of
+the DeepSeek Android app**. The **Google Play / international build is not
+supported**. Do not install or enable this module for the Google Play build;
+its internal implementation and obfuscated symbols may differ.
+
 ## Test Editions Discontinued
 
 The former API 102 and traditional-Xposed test editions are discontinued.
