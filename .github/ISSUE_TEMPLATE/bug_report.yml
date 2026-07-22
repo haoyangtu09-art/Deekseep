@@ -13,10 +13,8 @@ body:
       label: Variant
       options:
         - Stable API 102
-        - Test API 102
         - Stable legacy
-        - Test legacy
-        - API 102 load probe
+        - Historical/discontinued build
     validations:
       required: true
   - type: input

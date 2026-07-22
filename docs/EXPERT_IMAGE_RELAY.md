@@ -2,17 +2,17 @@
 
 ## Status
 
-Expert image relay is an experimental feature in:
-
-- the stable API 102 project; and
-- the legacy test project.
+Expert image relay is an opt-in experimental feature compiled from the same
+canonical core in both stable 1.7.1 interface packages.
 
 The relay and multi-image flow were device-validated on the legacy experimental
-track on 2026-07-12, then ported to the current modern stable source. The current
+track on 2026-07-12, then moved into the canonical stable source. The current
 send-point capture design for history image restoration builds successfully but
 still requires device validation. None of these experimental paths promises
 that the service will accept expert features on every account or future app
-version.
+version. It is now entered through the dedicated risk-gated
+[Experimental Features](EXPERIMENTAL_FEATURES.md) page; the old test APK is no
+longer published.
 
 ## Problem
 
@@ -43,6 +43,23 @@ For an expert completion with image file IDs:
 9. It sends and forwards the rewritten expert completion flow.
 
 If any required step fails, the wrapper falls back to the original host flow.
+
+## Multi-Turn Model Resolution
+
+DeepSeek includes `model_type` in the first completion request of a session but
+omits it when a later request has a parent message. Treating a missing value as
+non-expert therefore makes image relay work only on the first turn.
+
+The module captures the current session model (`tp.f()`) alongside the complete
+image objects at the `fu0`/`uu0` send point. The transport hook binds that value
+to the exact request object before the cold flow is returned. Relay gating uses
+an explicit request model when present and otherwise uses this per-request
+captured model. An explicit non-expert value always wins, and a request without
+reliable model context is left unchanged.
+
+The request's missing `model_type` is not rewritten. Only the prompt and image
+ID list are changed after a successful vision description, preserving the
+host's continuation protocol.
 
 ## Proof-of-Work Isolation
 

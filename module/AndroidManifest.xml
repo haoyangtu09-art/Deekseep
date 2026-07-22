@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.dsmod.probe"
-    android:versionCode="9"
-    android:versionName="1.7-r2-api102">
+    android:versionCode="30"
+    android:versionName="1.7.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
     <uses-permission
@@ -12,10 +12,19 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <queries>
+        <package android:name="com.deepseek.chat" />
+    </queries>
 
     <application
         android:label="Deekseep"
         android:description="@string/moddesc"
+        android:forceQueryable="true"
         android:allowBackup="false">
 
         <activity
@@ -34,5 +43,53 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+
+        <!--
+          User-initiated, invisible trampoline. DeepSeek cannot declare a package-visibility
+          query for a module that did not exist when the host APK was built. Resolving this unique
+          URI as an activity is the platform-supported way to enter the module's visible state;
+          the activity starts/stops the private foreground keeper and immediately returns.
+        -->
+        <activity
+            android:name="com.dsmod.probe.LocalApiKeepAliveActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="deekseep-module"
+                    android:host="local-api-keepalive" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The localhost API executes inside DeepSeek's process. Android may freeze a cached
+          activity process even when battery optimisation is disabled, which suspends both the
+          listener and an active SSE stream. This foreground service lives in the module process
+          and periodically dispatches an authenticated, no-op heartbeat through DeepSeek's
+          exported receiver. ActivityManager then keeps the target dispatchable without changing
+          the device-wide cached-app-freezer policy.
+        -->
+        <service
+            android:name="com.dsmod.probe.LocalApiKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the user-enabled DeepSeek localhost API and SSE stream responsive in the background." />
+        </service>
+
+        <!-- Modern libxposed delivers its service Binder to this exact authority. -->
+        <provider
+            android:name="com.dsmod.probe.XposedActivationProvider"
+            android:authorities="com.dsmod.probe.XposedService"
+            android:exported="true"
+            android:grantUriPermissions="false" />
     </application>
 </manifest>

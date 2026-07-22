@@ -1,6 +1,6 @@
 # Deekseep
 
-[![Build all variants](https://github.com/haoyangtu09-art/Deekseep/actions/workflows/build.yml/badge.svg)](https://github.com/haoyangtu09-art/Deekseep/actions/workflows/build.yml)
+[![Build stable releases](https://github.com/haoyangtu09-art/Deekseep/actions/workflows/build.yml/badge.svg)](https://github.com/haoyangtu09-art/Deekseep/actions/workflows/build.yml)
 [![libxposed API 102](https://img.shields.io/badge/libxposed-API%20102-2f6feb)](https://github.com/libxposed/api)
 [![Android 7+](https://img.shields.io/badge/Android-7.0%2B-3ddc84)](https://developer.android.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -8,9 +8,10 @@
 Deekseep is an unofficial Xposed module toolkit for the DeepSeek Android client.
 It provides a stable native settings entry, prompt injection, response-preservation
 hooks, local conversation tools, an advanced chat editor, database backup, and
-experimental expert-mode image relay. The repository contains modern libxposed
-API 102 builds, traditional Xposed compatibility builds, experimental builds,
-and a minimal API 102 load probe.
+experimental expert-mode image relay. Both stable 1.7.1 builds also provide a
+authenticated local/LAN OpenAI/Anthropic gateway for local SDKs, Codex, and Claude Code.
+The release contains a modern libxposed API 102 build and a traditional Xposed
+compatibility build compiled from the same feature core.
 
 > [!CAUTION]
 > **UNOFFICIAL SOFTWARE - READ BEFORE INSTALLING**
@@ -30,31 +31,27 @@ The recommended build for a current LSPosed installation is
 
 | Release asset | Channel | Xposed interface | Package | Intended use |
 |---|---|---|---|---|
-| [deekseep-stable-api102-v1.7.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-api102-v1.7.apk) | Stable | libxposed API 102 | `com.dsmod.probe` | Current LSPosed; broadest maintained stable feature set |
-| [deekseep-test-api102-v1.7.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-test-api102-v1.7.apk) | Test | libxposed API 102 | `com.dsmod.inject` | Compose and long-press message-injection experiments |
-| [deekseep-stable-legacy-v1.7.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-legacy-v1.7.apk) | Stable compatibility | Traditional Xposed API 82+ | `com.dsmod.probe` | FPA and older LSPosed environments |
-| [deekseep-test-legacy-v1.7.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-test-legacy-v1.7.apk) | Test compatibility | Traditional Xposed API 82+ | `com.dsmod.inject` | FPA/older LSPosed plus experimental hooks and vision relay |
-| [deekseep-api102-load-probe-v0.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-api102-load-probe-v0.1.apk) | Diagnostic | libxposed API 102 | `com.dsmod.mtest` | Confirms whether the framework loads a modern module |
+| [deekseep-stable-api102-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-api102-v1.7.1.apk) | Stable | libxposed API 102 | `com.dsmod.probe` | Current LSPosed; recommended |
+| [deekseep-stable-legacy-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-legacy-v1.7.1.apk) | Stable compatibility | Traditional Xposed API 82+ | `com.dsmod.probe` | Compatible FPA and older LSPosed environments |
 
-Modern and legacy builds in the same channel use the same Android package ID but
+Modern and legacy builds use the same Android package ID but
 different signing keys. They cannot be installed over one another. Uninstall the
-old interface variant before switching. Stable and test channels have different
-package IDs, but enabling both against DeepSeek at the same time can install
-conflicting hooks and is not supported.
+old interface variant before switching.
 
 Checksums are published with every release in `SHA256SUMS.txt`.
 
-The current files are the **v1.7 r2 maintenance builds**. All four complete
-variants now share reasoning creation, custom reasoning duration, reasoning-aware
-search, and native conversation navigation. They replace the earlier v1.7 APKs
-on the same release page; no separate release is required.
+The current stable release is **1.7.1**. The former test editions are
+discontinued and no longer published. Maintained high-risk options are now
+collected under a gated **Experimental Features** page with a five-second
+first-entry disclosure and separate help.
 
 ## Main Features
 
 - Native Deekseep entry attached to the DeepSeek settings screen.
 - System-prompt import and per-request injection with a private-file fallback.
 - Preservation of already-streamed answers when a later client update attempts
-  to replace them with a `CONTENT_FILTER` template.
+  to replace them with a `CONTENT_FILTER` template, including subsequent cold
+  starts and server-history refreshes once the replacement event was observed.
 - Local chat editor for titles, user messages, assistant responses, and reasoning
   fragments, including creation of a missing reasoning chain and a custom
   `elapsed_secs` duration.
@@ -67,12 +64,24 @@ on the same release page; no separate release is required.
 - Expert feature-flag experiments and image-to-text relay through the vision
   model, including multi-image parallel processing and local image metadata
   preservation.
+- Opt-in restoration of DeepSeek's native Google Credential
+  Manager login item on the mainland login page, without removing domestic
+  phone or WeChat methods.
+- A separate switch that restores the native WeChat and SMS phone
+  entries together on overseas login pages without changing the Google switch.
+- Modern activation reporting through the official Xposed service bridge plus
+  a UID-validated heartbeat from the DeepSeek target process.
+- A manually drawn local API control page in both stable builds,
+  with unrestricted-background preflight, OpenAI/Anthropic selection, custom keys,
+  Chat/Responses/Messages SSE, deep-thinking parameters, Codex/Claude Code Agent tool
+  loops, HTTP heartbeat and adaptive rate-limit recovery, a module foreground keeper
+  for Cached Apps Freezer, one fair account-wide native generation lane with Agent
+  priority and client-session isolation, and live request diagnostics.
 - Opt-in protocol diagnostics and module activation diagnostics.
 - First-run in-app risk disclosure.
 
-Feature availability differs by build. See the complete
-[variant and feature matrix](docs/VARIANTS.md) before choosing an experimental
-or legacy package.
+See the [stable interface guide](docs/VARIANTS.md) and dedicated
+[Experimental Features](docs/EXPERIMENTAL_FEATURES.md) safety notes.
 
 ## Compatibility
 
@@ -92,7 +101,8 @@ permanent guarantee.
 1. Back up the DeepSeek chat database.
 2. Download exactly one release variant from the table above.
 3. Install it and enable it in the matching Xposed framework.
-4. Select both `com.deepseek.chat` and the module package in scope.
+4. Select `com.deepseek.chat` in scope. Modern libxposed does not require or
+   support self-hooking the module application.
 5. Force-stop and restart DeepSeek.
 6. Accept the first-run risk disclosure.
 7. Open DeepSeek Settings and select the injected **Deekseep** entry.
@@ -105,13 +115,12 @@ covered in [Installation](docs/INSTALLATION.md).
 | Path | Purpose |
 |---|---|
 | `module/` | Stable modern build using libxposed API 102 |
-| `module-inject/` | Experimental modern API 102 build |
-| `module-legacy/` | Stable traditional Xposed compatibility build |
-| `module-inject-legacy/` | Experimental traditional Xposed compatibility build |
-| `module-mtest/` | Minimal modern API 102 load probe |
-| `scripts/` | Portable SDK discovery and all-variant build orchestration |
+| `module-legacy/` | Stable traditional Xposed adapter/build using the canonical stable core |
+| `module-inject/`, `module-inject-legacy/` | Discontinued historical test-edition source; not released |
+| `module-mtest/` | Historical diagnostic source; not part of the 1.7.1 release |
+| `scripts/` | Portable SDK discovery and stable-release build orchestration |
 | `docs/` | Installation, architecture, feature, compatibility, and repair notes |
-| `.github/workflows/` | Public CI build for all five variants |
+| `.github/workflows/` | Public CI for both stable interfaces |
 
 DeepSeek APK files, decompiled application output, device logs, chat databases,
 local signing keys, and other user data are deliberately excluded from this
@@ -127,8 +136,8 @@ export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
 bash scripts/build-all.sh
 ```
 
-The command builds all five variants, runs the reasoning ID/content/duration
-regression test, and writes renamed release files plus checksums to `dist/`. The scripts
+The command builds both stable interfaces, runs the protocol/account/editor/relay
+regressions, and writes the two release files plus checksums to `dist/`. The scripts
 also support Termux/ARM and discover its native `aapt2`, `zipalign`, and
 `apksigner` tools automatically.
 
@@ -138,10 +147,14 @@ and compile-only Xposed API boundaries.
 ## Documentation
 
 - [Feature reference](docs/FEATURES.md)
+- [Experimental Features](docs/EXPERIMENTAL_FEATURES.md)
 - [Variant matrix](docs/VARIANTS.md)
 - [Installation](docs/INSTALLATION.md)
 - [Building from source](docs/BUILDING.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [1.7.1 implementation and porting guide (中文)](docs/V1_7_1_PORTING_GUIDE.md)
+- [DeepSeek Local API, Codex and Claude Code configuration (中文)](docs/LOCAL_DEEPSEEK_API.md)
+- [Local DeepSeek API implementation status and roadmap (中文)](docs/LOCAL_DEEPSEEK_API_GATEWAY_PLAN.md)
 - [Expert image relay](docs/EXPERT_IMAGE_RELAY.md)
 - [Chat-editor reasoning repair](docs/CHAT_EDITOR_THINKING_FIX.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
@@ -154,9 +167,11 @@ and compile-only Xposed API boundaries.
 
 Deekseep runs inside the DeepSeek process. Depending on enabled features, it can
 read or update local chat databases, imported prompt files, uploaded-image
-metadata, and response events. Server-response logging is off by default because
+metadata, response events, and—when explicitly enabled—local API requests and
+private connection diagnostics. Server-response logging is off by default because
 those logs can contain complete prompts and model output. Do not publish logs or
-database backups without reviewing and redacting them.
+database backups without reviewing and redacting them. Local API connection and
+status files contain the complete Gateway Key and must be treated as credentials.
 
 The response-preservation option only prevents a client-side replacement of text
 that has already reached the device. It does not provide access to content the

@@ -1,0 +1,112 @@
+#!/data/data/com.termux/files/usr/bin/sh
+set -eu
+
+INFO_FILE=/data/data/com.deepseek.chat/files/deekseep_local_api.txt
+PUBLIC_FILE=/storage/emulated/0/Deekseep_API.txt
+
+read_info() {
+    if [ -r "$INFO_FILE" ]; then
+        sed -n '1,40p' "$INFO_FILE"
+        return
+    fi
+    if command -v su >/dev/null 2>&1; then
+        su -c "cat $INFO_FILE" 2>/dev/null && return
+    fi
+    if [ -r "$PUBLIC_FILE" ]; then
+        sed -n '1,40p' "$PUBLIC_FILE"
+        return
+    fi
+    return 1
+}
+
+INFO=$(read_info || true)
+PROTOCOL=$(printf '%s\n' "$INFO" | sed -n 's/^protocol=//p' | head -n 1)
+BASE_URL=$(printf '%s\n' "$INFO" | sed -n 's/^base_url=//p' | head -n 1)
+API_KEY=$(printf '%s\n' "$INFO" | sed -n 's/^api_key=//p' | head -n 1)
+
+if [ "$PROTOCOL" != anthropic ]; then
+    echo "DeepSeek 本地 API 当前不是 Anthropic 格式；请先在控制页切换。" >&2
+    exit 2
+fi
+if [ -z "$BASE_URL" ] || [ -z "$API_KEY" ] || [ "$API_KEY" = not-generated ]; then
+    echo "没有读取到本地 API 地址或 Key；请先打开 DeepSeek 并启动本地 API。" >&2
+    exit 2
+fi
+
+export ANTHROPIC_BASE_URL="$BASE_URL"
+export ANTHROPIC_AUTH_TOKEN="$API_KEY"
+export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-deepseek-chat}"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-deepseek-chat}"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-deepseek-chat}"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-deepseek-aux}"
+export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-deepseek-aux}"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}"
+export CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK="${CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK:-1}"
+# Termux terminals need Claude's full redraw path so /clear, /new and /reset erase the old view.
+# Do not inherit a stale shell-wide value of 1: Claude Code 2.1.0 correctly parses 0 as disabled,
+# while incremental redraw can leave pre-clear rows visible on some Android terminal renderers.
+export ENABLE_INCREMENTAL_TUI=0
+export DISABLE_AUTOUPDATER="${DISABLE_AUTOUPDATER:-1}"
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+# Claude Code currently hard-codes /tmp/claude for local-agent task state and for its
+# sandbox environment. Android application sandboxes cannot create /tmp, while Termux owns
+# $PREFIX/tmp. Keep the relocation scoped to this project's private Claude Code installation;
+# never create or rewrite the Android root /tmp and never touch another application's files.
+TERMUX_PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
+TERMUX_TMP="$TERMUX_PREFIX/tmp"
+CLAUDE_TMP="$TERMUX_TMP/claude"
+mkdir -p "$CLAUDE_TMP"
+chmod 700 "$CLAUDE_TMP"
+export TMPDIR="$TERMUX_TMP"
+export TMP="$TERMUX_TMP"
+export TEMP="$TERMUX_TMP"
+
+prepare_termux_tmp_mapping() {
+    cli="$PROJECT_DIR/.claude-code-termux/node_modules/@anthropic-ai/claude-code/cli.js"
+    [ -f "$cli" ] || return 0
+    if grep -q '"/tmp/claude\|TMPDIR=/tmp/claude' "$cli" 2>/dev/null; then
+        # Generated/minified npm payload: this is a mechanical Android path relocation. Running
+        # it at launch also reapplies the mapping after a future local Claude Code update.
+        sed -i \
+            -e "s#\"/tmp/claude/#\"$CLAUDE_TMP/#g" \
+            -e "s#\"/tmp/claude\"#\"$CLAUDE_TMP\"#g" \
+            -e "s#TMPDIR=/tmp/claude#TMPDIR=$CLAUDE_TMP#g" \
+            "$cli"
+    fi
+}
+
+# The Termux package identifies itself as Android, while the upstream npm archive only ships
+# linux/darwin ripgrep directories. Claude's Glob/Grep tools spawn this exact Android path.
+# Repair it inside this project from Termux's own rg without touching any system or other app.
+prepare_termux_ripgrep() {
+    command -v rg >/dev/null 2>&1 || return 0
+    case "$(uname -m 2>/dev/null || true)" in
+        aarch64|arm64) platform=arm64-android ;;
+        x86_64|amd64) platform=x64-android ;;
+        *) return 0 ;;
+    esac
+    base="$PROJECT_DIR/.claude-code-termux/node_modules/@anthropic-ai/claude-code/vendor/ripgrep"
+    target="$base/$platform/rg"
+    if [ ! -x "$target" ]; then
+        mkdir -p "$base/$platform"
+        ln -sf "$(command -v rg)" "$target"
+    fi
+}
+
+prepare_termux_tmp_mapping
+prepare_termux_ripgrep
+
+if [ -n "${CLAUDE_BIN:-}" ]; then
+    exec "$CLAUDE_BIN" "$@"
+fi
+
+LOCAL_CLAUDE="$PROJECT_DIR/.claude-code-termux/node_modules/@anthropic-ai/claude-code/cli.js"
+if [ -f "$LOCAL_CLAUDE" ]; then
+    export NODE_NO_WARNINGS="${NODE_NO_WARNINGS:-1}"
+    exec node "$LOCAL_CLAUDE" "$@"
+fi
+
+exec claude "$@"

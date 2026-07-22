@@ -25,7 +25,7 @@ export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
 the newest installed platform. It searches Termux's `$PREFIX/bin` first, then
 the current `PATH`, Android command-line tools, and Android Build Tools.
 
-## Clone and Build Everything
+## Clone and Build the Stable Release
 
 ```bash
 git clone https://github.com/haoyangtu09-art/Deekseep.git
@@ -33,27 +33,26 @@ cd Deekseep
 bash scripts/build-all.sh
 ```
 
-The final `dist/` directory contains:
+The final `dist/` directory contains only the supported 1.7.1 assets:
 
 ```text
-deekseep-stable-api102-v1.7.apk
-deekseep-test-api102-v1.7.apk
-deekseep-stable-legacy-v1.7.apk
-deekseep-test-legacy-v1.7.apk
-deekseep-api102-load-probe-v0.1.apk
+deekseep-stable-api102-v1.7.1.apk
+deekseep-stable-legacy-v1.7.1.apk
 SHA256SUMS.txt
 ```
 
-The all-variant build also runs the stable chat-editor regression test.
+The release build runs the stable protocol, account, editor and expert-relay
+regressions, verifies both manifests are version 1.7.1, checks the two Xposed
+metadata layouts, and refuses test/probe APKs in `dist/`.
+
+The old test and load-probe projects are intentionally not release targets.
+See [Build Variants](VARIANTS.md).
 
 ## Build One Variant
 
 ```bash
 (cd module && bash build.sh)
-(cd module-inject && bash build.sh)
 (cd module-legacy && bash build.sh)
-(cd module-inject-legacy && bash build.sh)
-(cd module-mtest && bash build.sh)
 ```
 
 The unrenamed outputs remain in their project directories:
@@ -61,10 +60,7 @@ The unrenamed outputs remain in their project directories:
 | Project | Output |
 |---|---|
 | `module/` | `ds-probe.apk` |
-| `module-inject/` | `ds-inject.apk` |
 | `module-legacy/` | `ds-probe-legacy.apk` |
-| `module-inject-legacy/` | `ds-inject-legacy.apk` |
-| `module-mtest/` | `ds-mtest.apk` |
 
 ## Termux
 
@@ -86,7 +82,7 @@ the build.
 
 ## Modern API Dependency
 
-The modern projects include `libs/api.jar`, extracted from the official
+The modern project includes `libs/api.jar`, extracted from the official
 libxposed API 102 AAR. It is a compile-only dependency:
 
 - `javac` uses it to resolve `io.github.libxposed.api` symbols;
@@ -94,15 +90,19 @@ libxposed API 102 AAR. It is a compile-only dependency:
 - the final APK must not package libxposed API classes;
 - the framework supplies those classes at runtime.
 
-The three tracked copies are identical so each project can be built
-independently.
+## Shared Stable Core and Legacy Adapter
 
-## Legacy Compile Stubs
+`module/src/com/dsmod/probe` is the canonical 1.7.1 feature core. The legacy
+build generates its entry from the same `Main.java` and compiles the same
+feature classes through `module-legacy/compat/LegacyXposedModule.java`. This
+prevents the traditional package from drifting several releases behind the
+modern package.
 
-Legacy projects include small source declarations under
-`src/de/robv/android/xposed/`. They expose only the signatures required by this
-project. D8 packages only `com/dsmod`, so the stubs do not shadow framework
-classes at runtime.
+The legacy project includes small declarations under
+`module-legacy/src/de/robv/android/xposed/`. They expose only compile-time
+signatures. D8 packages only `com/dsmod`, so these stubs do not shadow framework
+classes at runtime. `module-legacy/src/com/dsmod/probe` is retained historical
+source and is deliberately excluded by the build script.
 
 ## Generated Files and Signing
 
@@ -115,15 +115,31 @@ keys are not release-grade identity keys. CI creates fresh temporary keys, and
 APK signatures can therefore differ between machines. Android may require an
 uninstall before installing a build signed elsewhere.
 
-## Regression Test
+## Regression Tests
 
-The v1.7 reasoning fix has a JVM regression test:
+The stable build includes JVM regressions for chat editing, account credentials,
+regional login policy, expert relay, response preservation, native-session
+refresh/delete behavior, and the local API protocol/tool bridge:
 
 ```bash
 cd module
 bash build.sh
 bash test-thinking-regression.sh
+bash test-expert-relay-regression.sh
+(cd ../module-legacy && bash test-adapter-regression.sh)
 ```
+
+`test-thinking-regression.sh` runs the Java regression classes, including
+`OpenAiToolBridgeRegressionTest` and
+`LocalApiGatewayProtocolRegressionTest`. The latter checks Chat and Responses
+tool objects, SSE frames, namespace calls, and `previous_response_id` tool-result
+continuation with a fake native backend. Run `build.sh` first because the test
+classpath includes the freshly compiled production classes.
+
+The legacy adapter regression verifies that several canonical interceptors on
+the same reflected member register one traditional callback, preserve replaced
+arguments through the complete `chain.proceed()` order, and use the lowest
+callback priority so other modules' before/after hooks are not suppressed.
 
 It verifies that adding reasoning:
 
@@ -132,6 +148,11 @@ It verifies that adding reasoning:
 - keeps the response ID and content unchanged;
 - repairs an old reasoning fragment without an ID;
 - is idempotent on the second repair pass.
+
+The relay test verifies that an explicit first-turn expert request and a
+later-turn request with a send-point-captured expert model both enter the relay,
+while missing or explicit non-expert model contexts remain untouched. It also
+checks that the modern and legacy relay gate implementations are identical.
 
 ## Package Verification
 
@@ -148,5 +169,6 @@ A modern APK must contain `META-INF/xposed` and a legacy APK must contain
 ## Continuous Integration
 
 `.github/workflows/build.yml` installs Android Platform and Build Tools 35,
-builds all variants, runs the regression test, and uploads `dist/` as a workflow
-artifact on pushes, pull requests, and manual dispatches.
+builds and tests the two stable interfaces, and uploads the exact 1.7.1 `dist/`
+contents as a workflow artifact on pushes, pull requests, and manual dispatches.
+Test editions are not built or uploaded.

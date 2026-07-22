@@ -1,26 +1,23 @@
-# Stable Legacy Compatibility
+# Stable Traditional-Xposed Build
 
-This is the traditional Xposed compatibility form of the stable Deekseep
-channel, intended for FPA and older framework environments.
+This project produces `deekseep-stable-legacy-v1.7.1.apk` for traditional
+Xposed API 82+ environments.
 
-- Package: `com.dsmod.probe`
-- Interface: traditional Xposed API 82+
-- Entry: `assets/xposed_init`
-- Output: `ds-probe-legacy.apk`
-- Public asset: `deekseep-stable-legacy-v1.7.apk`
+The 1.7.1 legacy APK does not maintain a second feature fork. `build.sh`
+compiles the canonical sources under `../module/src/com/dsmod/probe`, generates
+a traditional `handleLoadPackage` entry from canonical `Main.java`, and bridges
+its around-hook contract through `compat/LegacyXposedModule.java`.
 
-It contains the stable core prompt, response-preservation, settings, and local
-editor paths. The v1.7 r2 build also provides reasoning creation and duration,
-malformed-reasoning migration, and reasoning-aware search that opens the native
-DeepSeek conversation. It remains a compatibility subset and does not contain
-every feature from the modern stable project.
+`src/de/robv/android/xposed` contains compile-only signatures supplied by the
+real framework at runtime. The historical files under `src/com/dsmod/probe`
+are excluded from compilation and retained only for repository history.
 
 ```bash
 cd module-legacy
 bash build.sh
+bash test-adapter-regression.sh
 ```
 
-The modern stable APK uses the same package ID with a different signature.
-Uninstall one before switching to the other. See
-[Build Variants](../docs/VARIANTS.md) and
-[Installation](../docs/INSTALLATION.md).
+The unrenamed output is `ds-probe-legacy.apk`. Use `scripts/build-all.sh` from
+the repository root to produce the signed 1.7.1 release filenames, run the
+canonical regressions and verify both stable APK layouts.

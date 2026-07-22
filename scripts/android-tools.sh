@@ -3,6 +3,12 @@
 # Shared Android SDK discovery for both Termux/ARM and conventional desktop CI.
 SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/android-sdk}}"
 
+# Termux SDK bootstrap installs under $PREFIX/tmp so it remains usable even when
+# callers do not export Android-specific variables in every shell.
+if [ ! -d "$SDK_ROOT" ] && [ -n "${PREFIX:-}" ] && [ -d "$PREFIX/tmp/android-sdk" ]; then
+    SDK_ROOT="$PREFIX/tmp/android-sdk"
+fi
+
 if [ ! -d "$SDK_ROOT" ]; then
     echo "Android SDK not found. Set ANDROID_SDK_ROOT or ANDROID_HOME." >&2
     return 1 2>/dev/null || exit 1

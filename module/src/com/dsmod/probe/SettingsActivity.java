@@ -10,6 +10,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -20,34 +22,17 @@ import android.widget.Toast;
 
 public class SettingsActivity extends Activity {
 
-    public static final String VERSION = "1.7";
+    public static final String VERSION = "1.7.1";
     private static final int REQ_STORAGE = 0xD540;
 
     private boolean dark;
     private int text, sub, card, bg;
-
-    public static boolean isModuleActive() { return false; }
-
-    // 二次判据：模块自身进程被注入时会写一个新鲜的激活标记文件
-    private boolean selfMarkerFresh() {
-        try {
-            java.io.File f = new java.io.File("/data/data/" + getPackageName() + "/files/deekseep_active");
-            return f.exists() && (System.currentTimeMillis() - f.lastModified() < 5 * 60 * 1000L);
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    // 主判据（FPA/容器场景）：模块自身进程不会被注入，selfMarkerFresh 永远失败。
-    // 但 DeepSeek 进程每次加载都会往共享外部存储写 LOADED_MARK_EXT，读它即可判活。
-    private boolean deepseekLoadedRecently() {
-        try {
-            java.io.File f = new java.io.File(Main.LOADED_MARK_EXT);
-            return f.exists() && (System.currentTimeMillis() - f.lastModified() < 7L * 24 * 60 * 60 * 1000L);
-        } catch (Throwable t) {
-            return false;
-        }
-    }
+    private TextView activationTitle;
+    private TextView activationDetail;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable activationStateChanged = new Runnable() {
+        @Override public void run() { refreshActivationState(); }
+    };
 
     private int dp(float v) {
         return Math.round(TypedValue.applyDimension(
@@ -65,8 +50,6 @@ public class SettingsActivity extends Activity {
         text  = dark ? 0xFFECECEC : 0xFF1A1A1A;
         sub   = dark ? 0xFF9A9A9E : 0xFF888888;
 
-        boolean active = isModuleActive() || selfMarkerFresh() || deepseekLoadedRecently();
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(bg);
@@ -83,18 +66,20 @@ public class SettingsActivity extends Activity {
         stCard.setGravity(Gravity.CENTER);
         stCard.setPadding(dp(20), dp(44), dp(20), dp(44));
 
-        TextView dot = new TextView(this);
-        dot.setText(active ? "\u25CF  已激活" : "\u25CB  未激活");
-        dot.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-        dot.setTypeface(Typeface.DEFAULT_BOLD);
-        dot.setTextColor(active ? 0xFF2ECC71 : 0xFFB0B0B0);
-        dot.setGravity(Gravity.CENTER);
-        stCard.addView(dot);
+        activationTitle = new TextView(this);
+        activationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        activationTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        activationTitle.setGravity(Gravity.CENTER);
+        stCard.addView(activationTitle);
 
-        addTextToCard(stCard, active
-                ? "已在 DeepSeek 设置页右上角显示 Deekseep 入口"
-                : "请在 LSPosed 启用本模块并勾选 DeepSeek 与本应用",
-                13, sub, dp(12));
+        activationDetail = new TextView(this);
+        activationDetail.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        activationDetail.setTextColor(sub);
+        activationDetail.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams statusDetailLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        statusDetailLp.topMargin = dp(12);
+        stCard.addView(activationDetail, statusDetailLp);
 
         root.addView(stCard, cardLp(dp(14)));
 
@@ -105,14 +90,78 @@ public class SettingsActivity extends Activity {
         verCard.setPadding(dp(16), dp(16), dp(16), dp(16));
         addText(verCard, "版本", 16, text, Typeface.NORMAL, 0).setLayoutParams(
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        addText(verCard, VERSION, 16, sub, Typeface.NORMAL, 0);
+        addText(verCard, BuildInfo.MODULE_VERSION, 16, sub, Typeface.NORMAL, 0);
         root.addView(verCard, cardLp(dp(14)));
 
         // 版本下方灰色小字：libxposed API 版本 + 编译日期
-        addText(root, "libxposed API " + BuildInfo.API_VERSION + "　·　编译于 " + BuildInfo.BUILD_DATE,
+        addText(root, (isLegacyBuild() ? "Xposed API " : "libxposed API ")
+                        + BuildInfo.API_VERSION + "　·　编译于 " + BuildInfo.BUILD_DATE,
                 11, sub, Typeface.NORMAL, dp(8));
 
         setContentView(root);
+        refreshActivationState();
+        XposedActivationProvider.setStateListener(activationStateChanged);
+        handler.postDelayed(activationStateChanged, 300L);
+        handler.postDelayed(activationStateChanged, 1200L);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        XposedActivationProvider.setStateListener(activationStateChanged);
+        handler.post(activationStateChanged);
+        handler.postDelayed(activationStateChanged, 500L);
+    }
+
+    @Override
+    protected void onDestroy() {
+        XposedActivationProvider.setStateListener(null);
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+
+    private void refreshActivationState() {
+        if (activationTitle == null || activationDetail == null || isFinishing()) return;
+        boolean framework = XposedActivationProvider.isFrameworkConnected();
+        boolean target = XposedActivationProvider.isTargetRecentlyActive(this);
+        if (isLegacyBuild()) {
+            activationTitle.setText(target ? "\u25CF  已激活" : "\u25CB  待验证");
+            activationTitle.setTextColor(target ? 0xFF2ECC71 : 0xFFB0B0B0);
+            activationDetail.setText(target
+                    ? "DeepSeek 目标进程最近已验证传统 Xposed 注入。" + targetVersionSuffix()
+                    : "尚未收到 DeepSeek 目标回报。请在传统 Xposed/FPA 中启用模块、勾选 "
+                            + "DeepSeek，然后启动一次 DeepSeek。");
+            return;
+        }
+        if (framework && target) {
+            activationTitle.setText("\u25CF  已激活");
+            activationTitle.setTextColor(0xFF2ECC71);
+            activationDetail.setText("LSPosed 服务已连接，DeepSeek 目标进程也已验证注入。"
+                    + targetVersionSuffix());
+        } else if (target) {
+            activationTitle.setText("\u25CF  已激活");
+            activationTitle.setTextColor(0xFF2ECC71);
+            activationDetail.setText("DeepSeek 目标进程最近已验证注入；框架服务会在可用时自动重连。"
+                    + targetVersionSuffix());
+        } else if (framework) {
+            activationTitle.setText("\u25CF  已启用");
+            activationTitle.setTextColor(0xFF2ECC71);
+            activationDetail.setText("LSPosed 已连接本模块。启动一次 DeepSeek 后，将进一步验证目标作用域。 ");
+        } else {
+            activationTitle.setText("\u25CB  待验证");
+            activationTitle.setTextColor(0xFFB0B0B0);
+            activationDetail.setText("尚未收到现代 Xposed 服务或 DeepSeek 目标回报。请在 LSPosed 启用模块、"
+                    + "勾选 DeepSeek，然后启动一次 DeepSeek。无需勾选模块应用自身。");
+        }
+    }
+
+    private static boolean isLegacyBuild() {
+        return BuildInfo.API_VERSION != null && BuildInfo.API_VERSION.contains("legacy");
+    }
+
+    private String targetVersionSuffix() {
+        String version = XposedActivationProvider.targetVersion(this);
+        return version.length() == 0 ? "" : " DeepSeek " + version;
     }
 
     private void ensureStoragePermission() {

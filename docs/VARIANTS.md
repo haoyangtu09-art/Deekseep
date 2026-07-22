@@ -1,100 +1,77 @@
 # Build Variants
 
-Deekseep is maintained as five standalone Android module projects. The variants
-exist because modern libxposed modules and traditional Xposed modules use
-different runtime entry APIs and packaging metadata.
+Deekseep 1.7.1 publishes two stable APKs. They compile the same canonical
+feature core and differ only in the Xposed entry interface and packaging.
 
 ## Selection Guide
 
-Use `module/` unless a specific compatibility or diagnostic need requires
-another build.
+| Directory | 1.7.1 release asset | Framework target | Package ID |
+|---|---|---|---|
+| `module/` | `deekseep-stable-api102-v1.7.1.apk` | Current LSPosed with libxposed API 102 | `com.dsmod.probe` |
+| `module-legacy/` | `deekseep-stable-legacy-v1.7.1.apk` | Traditional Xposed API 82+, including compatible FPA/older LSPosed environments | `com.dsmod.probe` |
 
-| Directory | Public asset | Channel | Framework target | Package ID |
-|---|---|---|---|---|
-| `module/` | `deekseep-stable-api102-v1.7.apk` | Stable | Current LSPosed with libxposed API 102 | `com.dsmod.probe` |
-| `module-inject/` | `deekseep-test-api102-v1.7.apk` | Test | Current LSPosed with libxposed API 102 | `com.dsmod.inject` |
-| `module-legacy/` | `deekseep-stable-legacy-v1.7.apk` | Stable compatibility | FPA or older LSPosed | `com.dsmod.probe` |
-| `module-inject-legacy/` | `deekseep-test-legacy-v1.7.apk` | FPA/test compatibility | FPA or older LSPosed | `com.dsmod.inject` |
-| `module-mtest/` | `deekseep-api102-load-probe-v0.1.apk` | Diagnostic | Current LSPosed with libxposed API 102 | `com.dsmod.mtest` |
+Use the API 102 build on a current LSPosed installation. Use the legacy build
+only when the framework cannot load modern libxposed metadata.
 
-## Feature Matrix
+## 1.7.1 Feature Parity
 
-"Experimental" means that the feature is present but depends on build-specific
-obfuscated symbols, server behavior, or an injection path that is less stable
-than the normal native settings overlay.
+Both release APKs are built from `module/src/com/dsmod/probe` and therefore
+contain the same stable and opt-in experimental functionality:
 
-| Capability | Stable API 102 | Test API 102 | Stable legacy | Test legacy |
-|---|---:|---:|---:|---:|
-| Native settings entry | Yes | Yes | Yes | Yes |
-| Prompt file import and injection | Yes | Yes | Yes | Yes |
-| Client response-replacement preservation | Yes | Yes | Yes | Yes |
-| First-run risk disclosure | Yes | Yes | Yes | Yes |
-| Local conversation editor | Yes | Yes | Yes | Yes |
-| Add reasoning to a response with no reasoning fragment | Yes | Yes | Yes | Yes |
-| Custom reasoning duration (`elapsed_secs`) | Yes | Yes | Yes | Yes |
-| Automatic malformed-reasoning migration | Yes | Yes | Yes | Yes |
-| Markdown conversation export | Yes | Yes | No | Yes |
-| Search user, model, and reasoning text | Yes | Yes | Yes | Yes |
-| Search result opens native DeepSeek conversation | Yes | Yes | Yes | Yes |
-| Conversation statistics | Yes | Yes | No | Yes |
-| Manual and automatic database backup | Yes | Yes | No | Yes |
-| Sidebar multi-select and batch delete | Yes | No | No | Yes |
-| Expert feature-flag unlock | Experimental | Experimental | No | Experimental |
-| Expert image-to-vision relay | Experimental | No | No | Experimental |
-| Parallel multi-image description | Experimental | No | No | Experimental |
-| Relay image metadata persistence | Experimental | No | No | Experimental |
-| Compose settings-row injection | No | Experimental | No | Experimental |
-| Long-press host message edit item | No | Experimental | No | Experimental |
-| Opt-in response diagnostics | Yes | Yes | Yes | Yes |
+- settings entry, prompt injection, response preservation and diagnostics;
+- account import/export with strict server validation;
+- refreshed cross-account chat editor, search, export, statistics and backup;
+- local conversation/image persistence, native navigation and deletion;
+- regional native-login restoration controls;
+- OpenAI Chat/Responses and Anthropic Messages local gateway;
+- Codex and Claude Code tool-result loops and conversation isolation;
+- the gated **Experimental Features** page, five-second first-entry disclosure
+  and separate experimental help.
 
-The minimal load probe contains none of the end-user features. It only hooks
-`Activity.onResume`, reports that the modern module loaded, and attempts to write
-a diagnostic marker.
+Features in the Experimental Features page remain off by default and are not a
+stability guarantee. See [Experimental Features](EXPERIMENTAL_FEATURES.md).
 
-The four complete builds share the editor's reasoning schema and the native
-search-navigation implementation. The traditional test build remains the
-FPA-oriented experimental package and is shipped beside the other v1.7 assets.
+## Test Editions Are Discontinued
 
-## Modern Interface
+Starting with 1.7.1, the former `module-inject/` and
+`module-inject-legacy/` test editions are discontinued and receive no GitHub
+Release APKs. Their direct Compose settings injection and host long-press menu
+experiments were too dependent on obfuscated UI internals to maintain as public
+parallel products. The separate `module-mtest/` load probe is also excluded
+from the 1.7.1 release.
 
-The modern projects:
+The historical source directories remain for archaeology and comparison, but
+they are not built by `scripts/build-all.sh`, not covered by the 1.7.1 release
+tests, and must not be presented as supported downloads. Experimental end-user
+features that remain maintained now live behind the dedicated page in the two
+stable APKs.
 
-- extend `io.github.libxposed.api.XposedModule`;
-- receive packages through `onPackageLoaded`;
-- declare entry metadata in `META-INF/xposed/`;
-- use libxposed API 102 as a compile-only dependency;
-- require a framework build that implements the modern API.
+## Interface Packaging
 
-## Traditional Interface
+The modern APK:
 
-The legacy projects:
+- extends `io.github.libxposed.api.XposedModule`;
+- receives packages through `onPackageLoaded`;
+- declares its entry in `META-INF/xposed/`;
+- compiles against libxposed API 102 without packaging the API classes.
 
-- implement `IXposedHookLoadPackage`;
-- receive packages through `handleLoadPackage`;
-- declare the entry in `assets/xposed_init` and manifest metadata;
-- compile against small `de.robv.android.xposed` stubs that are not packaged
-  into the final DEX;
-- target FPA and older LSPosed environments.
+The legacy APK:
 
-## Signature and Coexistence Rules
+- implements `IXposedHookLoadPackage` through a generated compatibility entry;
+- receives packages through `handleLoadPackage`;
+- declares `assets/xposed_init` and traditional manifest metadata;
+- compiles the canonical stable core through the traditional Xposed callback
+  adapter under `module-legacy/compat`;
+- does not package the compile-only `de.robv.android.xposed` stubs.
 
-Stable modern and stable legacy share `com.dsmod.probe`. Test modern and test
-legacy share `com.dsmod.inject`. Each interface track uses a separate local
-signing key, so Android will reject an in-place cross-interface update. Uninstall
-the installed package before switching between modern and legacy.
+## Signature and Switching Rules
 
-Stable and test packages have different IDs and can be installed together, but
-they must not both be enabled for `com.deepseek.chat`. Duplicate hooks can
-rewrite the same request or database row twice and are unsupported.
+Both stable APKs use `com.dsmod.probe`, but the local modern and legacy build
+scripts use different development keys. Android can reject an in-place switch
+because the signatures differ. Disable and uninstall the current module APK
+before installing the other interface; this does not uninstall DeepSeek.
 
-Release builds use local development keys. Keys are excluded from Git and CI
-generates temporary keys. A build from another machine may therefore require an
-uninstall before installation.
-
-## Why Feature Sets Differ
-
-The projects are parallel compatibility tracks, not generated flavors of one
-Gradle module. Some experiments were first proven on FPA, while later stable
-work moved to the modern API 102 project. Code is only ported when the target
-hook interface and affected feature have been verified; undocumented bulk
-copying between tracks would create false compatibility claims.
+Enable only one Deekseep implementation for `com.deepseek.chat`. Duplicate
+hooks can rewrite the same request or database row twice and are unsupported.
+Release keys are local and excluded from Git, so a build made on another
+machine may likewise require uninstalling the previous APK.

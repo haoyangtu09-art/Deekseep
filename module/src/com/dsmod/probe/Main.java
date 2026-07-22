@@ -1,19 +1,31 @@
 package com.dsmod.probe;
 
+import com.dsmod.relay.ExpertRelayGate;
+
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.Dialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.content.Intent;
+import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.system.Os;
 import android.util.Log;
 import android.util.TypedValue;
@@ -27,10 +39,17 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.InputStreamReader;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
@@ -48,7 +67,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedInterface.Chain;
@@ -72,8 +96,33 @@ public class Main extends XposedModule {
     static final String SRVLOG_FILE       = "/data/data/com.deepseek.chat/files/deekseep_srvlog";
     static final String AUTO_BACKUP_FILE  = "/data/data/com.deepseek.chat/files/deekseep_auto_backup";
     static final String EXPERT_UNLOCK_FILE = "/data/data/com.deepseek.chat/files/deekseep_expert_unlock";
+    static final String GOOGLE_LOGIN_UNLOCK_FILE =
+            "/data/data/com.deepseek.chat/files/deekseep_google_login_unlock";
+    static final String WECHAT_MOBILE_LOGIN_UNLOCK_FILE =
+            "/data/data/com.deepseek.chat/files/deekseep_wechat_mobile_login_unlock";
+    static final String LOCAL_API_ENABLED_FILE =
+            "/data/data/com.deepseek.chat/files/deekseep_local_api_enabled";
+    static final String LOCAL_API_BACKGROUND_READY_FILE =
+            "/data/data/com.deepseek.chat/files/deekseep_local_api_background_ready";
+    static final String LOCAL_API_SESSION_FILE =
+            "/data/data/com.deepseek.chat/files/deekseep_local_api_sessions.json";
     static final String CHAT_MULTISELECT_FILE = "/data/data/com.deepseek.chat/files/deekseep_chat_multiselect";
     static final int    PICK_REQUEST      = 0xDE3E;
+    static final int    PICK_IMAGE_REQUEST = 0xDE3F;
+    static final int    ACCOUNT_IMPORT_REQUEST = 0xDE40;
+    static final int    ACCOUNT_EXPORT_REQUEST = 0xDE41;
+    static final int    LOCAL_API_BATTERY_REQUEST = 0xDE42;
+    private static final String EDITOR_IMAGE_MASTER_DIR =
+            "/data/data/com.deepseek.chat/files/deekseep_editor_images";
+    private static final String EDITOR_IMAGE_CACHE_DIR =
+            "/data/data/com.deepseek.chat/cache/captured";
+    private static final String EDITOR_IMAGE_URI_PREFIX =
+            "content://com.deepseek.chat.provider/tmp_captured_images/";
+
+    interface GalleryPickCallback {
+        void onPicked(Uri uri);
+    }
+    private static volatile GalleryPickCallback galleryPickCallback;
 
     // ── 侧栏聊天记录多选删除（sidebar multi-select delete）─────────────
     private static final Map<String, Object> SIDEBAR_DELETE_ACTIONS = new HashMap<>();
@@ -121,12 +170,60 @@ public class Main extends XposedModule {
     private static volatile Object liveR92;
     private static volatile Object liveQ71;
     private static volatile Object liveFm8;
+    private static volatile ClassLoader hostClassLoader;
+    private static final ThreadLocal<Boolean> tlLocalApiRequest = new ThreadLocal<>();
+    // DeepSeek permits only one active native generation for this account. Every translated
+    // request therefore shares one fair lane. Agent turns announce themselves before queuing;
+    // nonessential Claude metadata waits outside the lane so it cannot occupy the sole permit.
+    private static final Semaphore LOCAL_API_COMPLETION_SLOTS = new Semaphore(1, true);
+    private static final AtomicInteger LOCAL_API_AGENT_WAITERS = new AtomicInteger();
+    private static volatile long localApiAgentPriorityUntil;
+    private static volatile long localApiNextAuxiliaryStartAt;
+    private static final long LOCAL_API_TIMEOUT_SECONDS = 180L;
+    // Includes time spent waiting for the single native lane, PoW, retries and stream collection.
+    // A local Agent must always receive either a response or a bounded OpenAI-style error.
+    private static final long LOCAL_API_REQUEST_BUDGET_MS = 170_000L;
+    private static final ThreadLocal<Long> tlLocalApiDeadline = new ThreadLocal<>();
+    private static final ThreadLocal<LocalApiGateway.DeltaSink> tlLocalApiSink =
+            new ThreadLocal<>();
+    private static final long LOCAL_API_AGENT_QUEUE_WAIT_MS = 60_000L;
+    private static final long LOCAL_API_CHAT_QUEUE_WAIT_MS = 30_000L;
+    private static final long LOCAL_API_AUX_QUEUE_WAIT_MS = 8_000L;
+    private static final long LOCAL_API_QUEUE_POLL_MS = 250L;
+    // The native service rejects bursts even when they are serialized. Space completion starts
+    // apart and extend the not-before time after an explicit upstream rate-limit event.
+    private static final long LOCAL_API_MIN_START_INTERVAL_MS = 2500L;
+    private static final Object LOCAL_API_RATE_LOCK = new Object();
+    private static volatile long localApiNextNativeStartAt;
+    private static volatile int localApiRateLimitStreak;
+    private static final Object LOCAL_API_POW_LOCK = new Object();
+    private static final Object LOCAL_API_POW_SERIAL_LOCK = new Object();
+    private static volatile LocalApiPowTask localApiPowTask;
+    private static final Object LOCAL_API_SESSION_LOCK = new Object();
+    private static final Map<String, String> LOCAL_API_SESSIONS = new HashMap<>();
+    private static final Map<String, Long> LOCAL_API_SESSION_LAST_USED = new HashMap<>();
+    // Claude Code creates a fresh client UUID for /new and /clear. Bound the hidden branch
+    // directory so abandoned conversations cannot accumulate forever in DeepSeek history.
+    private static final int LOCAL_API_SESSION_MAX = 32;
+    private static final long LOCAL_API_SESSION_TTL_MS = 24L * 60L * 60L * 1000L;
+    private static final long LOCAL_API_SESSION_TOUCH_PERSIST_MS = 5L * 60L * 1000L;
+    private static final int LOCAL_API_SESSION_PRUNE_BATCH = 4;
+    private static final String LOCAL_API_SESSION_META_KEY = "__deekseep_meta";
+    private static final AtomicInteger LOCAL_API_SESSION_MAINTENANCE_RUNNING =
+            new AtomicInteger();
+    private static long localApiSessionStatePersistedAt;
+    private static volatile boolean localApiSessionsLoaded;
+    private static volatile String localApiLastSessionError = "not attempted";
     private static final HashSet<String> expertRelaySessionIds = new HashSet<>();
-    // 发送点(fu0.y/uu0.y)捕获的图片 fp 列表：主线程同栈传给紧随其后的 r92.b hook。
+    // 发送点(fu0.y/uu0.y)捕获的图片 fp 列表与当前会话模型：主线程同栈传给紧随其后的 transport hook。
     private static final ThreadLocal<List> tlPendingFps = new ThreadLocal<>();
+    private static final ThreadLocal<String> tlPendingModel = new ThreadLocal<>();
     // 把捕获到的 List<fp> 挂到对应 ew0 上（relay 在收集时/IO 线程跑，ThreadLocal 到不了）。
     private static final Map<Object, List> ew0Fps =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Object, List>());
+    // DeepSeek 仅首轮把 model_type 写入 ew0；后续轮次为 null，因此需把发送点 tp.f() 绑定到本次请求。
+    private static final Map<Object, String> ew0EffectiveModels =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Object, String>());
     // 已在处理中的 expert 请求（弱引用集合，防同一对象被 hook 重复处理）
     private static final java.util.Set<Object> relaySeen =
             java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
@@ -151,16 +248,64 @@ public class Main extends XposedModule {
 
     // 首次注入 DeepSeek 时弹出的免责声明；同意后写此标记，之后不再弹
     static final String DISCLAIMER_FILE = "/data/data/com.deepseek.chat/files/deekseep_disclaimer_ok";
+    static final String DISCLAIMER_VERSION = "2026-07-19-v7";
+    static final String EXPERIMENTAL_DISCLAIMER_FILE =
+            "/data/data/com.deepseek.chat/files/deekseep_experimental_disclaimer_ok";
+    static final String EXPERIMENTAL_DISCLAIMER_VERSION = "2026-07-20-v1";
     private static volatile boolean disclaimerHandled = false;
-    // 模块自身进程被注入后写入的激活标记，供 SettingsActivity 二次判定“已激活”
-    static final String SELF_ACTIVE_MARK = "/data/data/" + SELF + "/files/deekseep_active";
+    private static volatile boolean googleLoginUnlockInjectedLogged = false;
+    private static volatile boolean wechatMobileLoginUnlockInjectedLogged = false;
+    private static volatile long activationHeartbeatAttemptAt = 0L;
+    private static volatile boolean activationHeartbeatLogged = false;
+    private static volatile long localApiKeepAliveHeartbeatAt;
+    private static volatile String localApiKeepAliveError = "尚未启动前台保活";
+    private static volatile boolean localApiKeepAliveControlLogged;
+    private static volatile long localApiKeepAliveLaunchAt;
 
     private static final String SETTINGS_CLASS = "u25";
     private static final String SETTINGS_METHOD = "i";
 
-    // Captured from mc.f: DeepSeek's complete native session list and its own click handler.
+    // Captured from mc.f: DeepSeek's complete native session list, click handler, and the
+    // central s61 event sink.  Sending h61(tp) through that sink is DeepSeek's real deletion
+    // path: server request first, then native list/WCDB cleanup on success.
     private static volatile Object NATIVE_SESSION_LIST;
+    // Canonical ed0.e SnapshotStateList.  mc.f only renders this state; replacing its argument
+    // with a merged copy is not enough because navigation and the active-chat validator continue
+    // to observe the original list.
+    private static volatile Object NATIVE_SESSION_STATE;
     private static volatile Object NATIVE_SESSION_CLICK;
+    private static volatile Object NATIVE_SESSION_EVENTS;
+    private static final ConcurrentHashMap<String, Long> RECENTLY_DELETED_SESSION_IDS =
+            new ConcurrentHashMap<>();
+    private static final long DELETED_SESSION_VISIBILITY_GRACE_MS = 120000L;
+    // Original mv objects for which a real CONTENT_FILTER event was observed. Weak keys ensure
+    // normal message lifetimes are unchanged; once a tp provides the SID, the exact kv is written
+    // to ResponsePreserver's private durable store.
+    private static final Map<Object, Boolean> FILTERED_ORIGINAL_MESSAGES =
+            Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
+    private static final Map<String, Object> LOCAL_NATIVE_SESSIONS = new HashMap<>();
+    private static volatile HashSet<String> LOCAL_SESSION_IDS = new HashSet<>();
+    private static volatile long LOCAL_SESSION_IDS_AT;
+    private static volatile long LOCAL_NATIVE_MERGE_LOG_AT;
+    private static volatile long LOCAL_NATIVE_STATE_REPAIR_LOG_AT;
+    private static volatile long LOCAL_DIRECTORY_MERGE_LOG_AT;
+    private static volatile long LOCAL_DIRECTORY_HEAD_LOG_AT;
+    private static final ThreadLocal<Boolean> LOCAL_DIRECTORY_SYNC = new ThreadLocal<>();
+    // Loaded once before WCDB starts, then refreshed from p68's already-materialised local rows.
+    private static final ConcurrentHashMap<String, Integer> FROZEN_SESSION_HEADS =
+            new ConcurrentHashMap<>();
+    private static final HashSet<Class<?>> NATIVE_CLICK_HOOKED_CLASSES = new HashSet<>();
+    private static volatile String PENDING_LOCAL_OPEN_SID;
+    private static volatile long PENDING_LOCAL_OPEN_AT;
+    // Marker-gated real-flow probe; removed after the failing device path is captured.
+    private static final String REAL_SESSION_PROBE_FILE =
+            "/data/data/com.deepseek.chat/files/deekseep_real_session_probe";
+
+    // DeepSeek 自己的文件 API（pv0）。编辑器复用宿主登录态调用 fork_file_task，
+    // 为复制到聊天记录的图片取得新的 file_id/signed_path，避免旧签名重开后失效。
+    private static volatile Object IMAGE_FILE_API;
+    private static volatile Object IMAGE_COMPOSER;
+    private static volatile ClassLoader IMAGE_HOST_CL;
 
     // 现代 API：模块实例，供静态 log 走框架日志
     private static volatile Main MODULE;
@@ -256,8 +401,8 @@ public class Main extends XposedModule {
         final ClassLoader cl = param.getDefaultClassLoader();
         final String pkg = param.getPackageName();
 
-        if (SELF.equals(pkg)) { markSelfActive(cl); return; }
         if (!TARGET.equals(pkg)) return;
+        hostClassLoader = cl;
 
         // 崩溃捕获：把未捕获异常栈写到 modern 自己新建的外部文件(Termux 可读)，
         // 用于诊断“上传图片点发送直接闪退”这类无 root/无 logcat 场景的崩溃。
@@ -270,6 +415,26 @@ public class Main extends XposedModule {
             try { new FileWriter(SRV_LOG_EXT, false).close(); } catch (Throwable ignored) {}
         }
         log("module loaded (modern), package=" + pkg);
+        installLocalApiKeepAliveReceiverHook(cl);
+        restoreLocalEditorImages();
+        int obsoleteTriggers = ChatEditorUi.removeObsoleteLocalSessionProtection();
+        if (obsoleteTriggers > 0) {
+            log("removed obsolete local-session triggers=" + obsoleteTriggers);
+        }
+        // This is the only safe time to use Android SQLite against DeepSeek's database: package
+        // load runs before the host starts its WCDB repositories. Never repair from a delayed
+        // worker after this point, because crossing both SQLite engines can leave WCDB blocked in
+        // sqlite3_step and make an otherwise intact conversation render as an empty page.
+        int restoredLocal = ChatEditorUi.restoreLocalConversations();
+        if (restoredLocal > 0) {
+            log("restored local conversations before WCDB startup=" + restoredLocal);
+        }
+        int repairedHeads = ChatEditorUi.repairFrozenCurrentMessageIds();
+        if (repairedHeads > 0) {
+            log("repaired frozen conversation heads before WCDB startup=" + repairedHeads);
+        }
+        FROZEN_SESSION_HEADS.clear();
+        FROZEN_SESSION_HEADS.putAll(ChatEditorUi.frozenCurrentMessageIds());
         // 自动备份：距上次>24h 且开关开启时后台复制数据库
         new Thread(new Runnable() { public void run() {
             try { DeekseepTools.maybeAutoBackup(); } catch (Throwable ignored) {}
@@ -290,6 +455,14 @@ public class Main extends XposedModule {
                     try {
                         Activity act = (Activity) chain.getThisObject();
                         curAct = new WeakReference<>(act);
+                        reportActivationHeartbeat(act);
+                        if (isLocalApiEnabled() && isLocalApiBackgroundApproved(act)) {
+                            requestLocalApiKeepAlive(act, true);
+                            startLocalApiGateway(act);
+                        } else {
+                            requestLocalApiKeepAlive(act, false);
+                            if (LocalApiGateway.isRunning()) LocalApiGateway.stop();
+                        }
                         if (!loadToastShown) {
                             loadToastShown = true;
                             try {
@@ -326,7 +499,29 @@ public class Main extends XposedModule {
                         int req = (int) chain.getArg(0);
                         int res = (int) chain.getArg(1);
                         Object dataArg = chain.getArg(2);
-                        if (req == PICK_REQUEST) {
+                        if (req == ACCOUNT_IMPORT_REQUEST) {
+                            AccountUi.handleImportResult((Activity) chain.getThisObject(), res,
+                                    dataArg instanceof Intent ? (Intent) dataArg : null);
+                        } else if (req == ACCOUNT_EXPORT_REQUEST) {
+                            AccountUi.handleExportResult((Activity) chain.getThisObject(), res,
+                                    dataArg instanceof Intent ? (Intent) dataArg : null);
+                        } else if (req == LOCAL_API_BATTERY_REQUEST) {
+                            DeekseepUi.handleLocalApiBatterySettingsResult(
+                                    (Activity) chain.getThisObject());
+                        } else if (req == PICK_IMAGE_REQUEST) {
+                            GalleryPickCallback callback = galleryPickCallback;
+                            galleryPickCallback = null;
+                            Uri uri = null;
+                            if (res == Activity.RESULT_OK && dataArg instanceof Intent) {
+                                Intent data = (Intent) dataArg;
+                                uri = data.getData();
+                                if (uri != null) {
+                                    persistReadGrant((Activity) chain.getThisObject(), data, uri);
+                                }
+                            }
+                            log("gallery pick result: res=" + res + ", uri=" + uri);
+                            if (callback != null) callback.onPicked(uri);
+                        } else if (req == PICK_REQUEST) {
                             log("pick result: res=" + res + ", hasData=" + (dataArg != null));
                             if (res == Activity.RESULT_OK && dataArg != null) {
                                 Intent data = (Intent) dataArg;
@@ -346,16 +541,24 @@ public class Main extends XposedModule {
 
         // hook ChatFullCompletionRequest 构造，注入系统提示词到 prompt 字段
         hookChatRequest(cl);
-        // ★ 在宿主读取当前会话前同步修复无 id THINK，避免后台线程与首屏加载竞态。
-        try {
-            int n = ChatEditorUi.repairMalformedThinkFragmentsAllSessions();
-            log("repairMalformedThinkFragments fixed=" + n);
-        } catch (Throwable t) { log("repairMalformedThinkFragments err: " + t); }
-        // 历史 <system> 前缀清理仍放后台执行，避免无关的全库维护阻塞启动。
-        new Thread(new Runnable() { public void run() {
-            try { int n = ChatEditorUi.stripAllSessions(); log("stripAllSessions cleaned=" + n); }
-            catch (Throwable t) { log("stripAllSessions err: " + t); }
-        }}).start();
+        // 在线历史在进入宿主 UI/SQLite 前同步清掉注入前缀，并缓存未落库的会话快照。
+        try { installExpertHistoryImagePreserver(cl); }
+        catch (Throwable t) { log("install history bridge wiring failed: " + t); }
+        // 旧格式只需在升级后的首次冷启动同步迁移；随后由在线/仓库 hook 处理新数据，
+        // 避免每次启动都扫描所有账号库并与宿主 WCDB 争锁。
+        File historyMigration = new File("/data/data/com.deepseek.chat/files/deekseep_history_migration_v3");
+        if (!historyMigration.exists()) {
+            boolean migrationOk = true;
+            try { int n = ChatEditorUi.repairMalformedThinkFragmentsAllSessions();
+                if (n < 0) migrationOk = false;
+                log("repairMalformedThinkFragments fixed=" + n); }
+            catch (Throwable t) { migrationOk = false; log("repairMalformedThinkFragments err: " + t); }
+            try { int n = ChatEditorUi.stripAllSessions(); if (n < 0) migrationOk = false;
+                log("stripAllSessions cleaned=" + n); }
+            catch (Throwable t) { migrationOk = false; log("stripAllSessions err: " + t); }
+            if (migrationOk) try { overwriteTextFile(historyMigration.getPath(), "3"); }
+            catch (Throwable t) { log("history migration marker err: " + t); }
+        }
         // hook ServerMessageHint(kb7) 构造，强制 clear_response=false
         hookSafetyRetraction(cl);
         // 诊断：抓取服务器返回的 SSE 原始事件（lv7）
@@ -374,14 +577,28 @@ public class Main extends XposedModule {
         hookFinalMessageApply(cl);
         // ★ 专家模式(expert)解锁 聊天/搜索/上传文件（sf5 构造后强改 final 字段）
         hookExpertUnlock(cl);
+        // 国内/海外登录页会按地区删减原生登录项；分别按两个开关恢复 Google，或成组恢复
+        // 微信与短信手机号。点击仍完整走 DeepSeek 自己的原生登录与官方换票接口。
+        hookRegionalLoginUnlock(cl);
         // ★ 上传门禁兜底：在 y91.a 真正读 sf5.l 判空前，就地俘获并点亮被消费的那个 sf5 实例（诊断+修复）
         try { installExpertUploadGate(cl); } catch (Throwable t) { log("installExpertUploadGate wiring failed: " + t); }
         // ★ 专家图片→视觉描述中继：抓 transport(r92)、PoW(q71)、历史图片保留(fm8/pw0)、发送点图片(fu0/uu0)
         try { installNetworkPayloadCapture(cl); } catch (Throwable t) { log("installNetworkPayloadCapture wiring failed: " + t); }
         try { installPowManagerCapture(cl); } catch (Throwable t) { log("installPowManagerCapture wiring failed: " + t); }
-        try { installExpertHistoryImagePreserver(cl); } catch (Throwable t) { log("installExpertHistoryImagePreserver wiring failed: " + t); }
+        try { hookLocalApiSessionVisibility(cl); }
+        catch (Throwable t) { log("hookLocalApiSessionVisibility wiring failed: " + t); }
         try { installExpertImageFpCapture(cl); } catch (Throwable t) { log("installExpertImageFpCapture wiring failed: " + t); }
+        try { installImageCredentialBridge(cl); }
+        catch (Throwable t) { log("installImageCredentialBridge wiring failed: " + t); }
+        hookLocalEditorImageUris(cl);
+        hookLocalSessionDirectoryMerge(cl);
+        hookLocalNativeSessionRefresh(cl);
+        hookLocalSessionRemoteReload(cl);
+        hookLocalSessionDeletedFlow(cl);
+        hookLocalSessionDeletedResponse(cl);
         hookNativeSessionNavigator(cl);
+        hookHistoryLoadDiagnostics(cl);
+        scheduleRealSessionProbe();
         // hook 导航变化，离开设置页时移除入口按钮
         hookSettingsNavigation(cl);
         // ★ 侧栏聊天记录多选删除（modern Compose Hooker，手机端适配）
@@ -406,6 +623,39 @@ public class Main extends XposedModule {
             }
             log("hooked settings composable " + SETTINGS_CLASS + "." + SETTINGS_METHOD + " x" + n);
         } catch (Throwable t) { log("hook settings composable failed: " + t); }
+    }
+
+    /**
+     * The host normally stores a server-relative value in fp.signed_path.  us.a(host) then
+     * turns that value into https://host/api{signed_path}.  Editor gallery images deliberately
+     * use the app's own FileProvider instead, so passing them through the server URL builder
+     * produces an invalid https URL even though the durable file and cache mirror are intact.
+     * Keep the host path untouched for every normal attachment and unwrap only our private,
+     * narrowly-scoped FileProvider prefix.
+     */
+    private void hookLocalEditorImageUris(final ClassLoader cl) {
+        try {
+            Class<?> imagePath = cl.loadClass("us");
+            final Field signedPath = imagePath.getDeclaredField("b");
+            signedPath.setAccessible(true);
+            Method resolve = imagePath.getDeclaredMethod("a", String.class);
+            resolve.setAccessible(true);
+            hook(resolve).intercept(new Hooker() {
+                @Override public Object intercept(Chain chain) throws Throwable {
+                    Object raw = signedPath.get(chain.getThisObject());
+                    if (raw instanceof String
+                            && ((String) raw).startsWith(EDITOR_IMAGE_URI_PREFIX)) {
+                        Uri local = Uri.parse((String) raw);
+                        log("resolved local editor image uri=" + local.getLastPathSegment());
+                        return local;
+                    }
+                    return chain.proceed();
+                }
+            });
+            log("hooked local editor image URI resolver");
+        } catch (Throwable t) {
+            log("hook local editor image URI resolver failed: " + t);
+        }
     }
 
     // ── 侧栏聊天记录多选删除（modern Compose Hooker 版）────────────────
@@ -625,7 +875,7 @@ public class Main extends XposedModule {
     }
 
     private static void showSidebarSelectOverlay(final Activity act) {
-        final List<ChatEditorUi.Session> sessions = loadCurrentSidebarSessions();
+        final List<ChatEditorUi.Session> sessions = loadCurrentSidebarSessions(act);
         if (sessions.isEmpty()) {
             Toast.makeText(act, "没有可删除的本地对话", Toast.LENGTH_SHORT).show();
             return;
@@ -1113,9 +1363,10 @@ public class Main extends XposedModule {
         }
     }
 
-    private static List<ChatEditorUi.Session> loadCurrentSidebarSessions() {
+    private static List<ChatEditorUi.Session> loadCurrentSidebarSessions(Activity act) {
         List<ChatEditorUi.Session> out = new ArrayList<>();
-        File f = ChatEditorUi.currentDb();
+        HashSet<String> seen = new HashSet<>();
+        File f = ChatEditorUi.currentDb(act.getClassLoader());
         if (f == null) return out;
         SQLiteDatabase d = null;
         Cursor c = null;
@@ -1127,31 +1378,48 @@ public class Main extends XposedModule {
                 s.id = c.getString(0);
                 s.title = c.getString(1);
                 s.dbPath = f.getPath();
-                if (s.id != null) out.add(s);
+                if (s.id != null) {
+                    out.add(s);
+                    seen.add(s.id);
+                }
             }
         } catch (Throwable ignored) {
         } finally {
             if (c != null) try { c.close(); } catch (Throwable ignored) {}
             if (d != null) try { d.close(); } catch (Throwable ignored) {}
         }
+        // A just-synchronized cloud conversation may be visible in the native sidebar before its
+        // directory row reaches SQLite. Include it so batch selection/deletion is not silently
+        // limited to the older database snapshot.
+        for (Object[] row : nativeSessionDirectory()) {
+            if (row == null || row.length < 2 || row[0] == null) continue;
+            String sid = String.valueOf(row[0]);
+            if (sid.length() == 0 || !seen.add(sid)) continue;
+            ChatEditorUi.Session s = new ChatEditorUi.Session();
+            s.id = sid;
+            s.title = row[1] == null ? "" : String.valueOf(row[1]);
+            s.dbPath = f.getPath();
+            s.nativeOnly = true;
+            out.add(s);
+        }
         return out;
     }
 
     private static void deleteSidebarSelected(final Activity act, List<ChatEditorUi.Session> sessions) {
-        int original = 0;
+        int nativeRequested = 0;
         int localOk = 0;
         int fail = 0;
+        int matched = 0;
         Map<String, List<String>> local = new HashMap<>();
         HashSet<String> selected = new HashSet<>(SIDEBAR_SELECTED);
         for (int i = 0; i < sessions.size(); i++) {
             ChatEditorUi.Session s = sessions.get(i);
             if (s.id == null || !selected.contains(s.id)) continue;
-            Object action;
-            synchronized (SIDEBAR_DELETE_ACTIONS) { action = SIDEBAR_DELETE_ACTIONS.get(s.id); }
-            if (invokeXa3(action)) {
-                original++;
-                continue;
-            }
+            matched++;
+            // Always use DeepSeek's authenticated h61(tp) route when it is available. Local
+            // cleanup still runs afterwards: the host success path does not know about Deekseep
+            // sidecars, and leaving one behind resurrects the conversation on cold start.
+            if (requestNativeSessionDelete(s.id)) nativeRequested++;
             List<String> ids = local.get(s.dbPath);
             if (ids == null) {
                 ids = new ArrayList<>();
@@ -1174,10 +1442,14 @@ public class Main extends XposedModule {
                 if (d != null) try { d.close(); } catch (Throwable ignored) {}
             }
         }
+        fail += Math.max(0, selected.size() - matched);
 
         String msg;
-        if (fail > 0) msg = "已提交 " + original + " 个，已本地删除 " + localOk + " 个，失败 " + fail + " 个";
-        else msg = "已提交 " + original + " 个，已本地删除 " + localOk + " 个";
+        msg = "已请求 DeepSeek 删除 " + nativeRequested + " 个，本地已移除 "
+                + localOk + " 个";
+        int nativeUnavailable = Math.max(0, matched - nativeRequested);
+        if (nativeUnavailable > 0) msg += "，未取得原生链路 " + nativeUnavailable + " 个";
+        if (fail > 0) msg += "，本地失败 " + fail + " 个";
         exitSidebarSelectMode();
         Toast.makeText(act, msg, Toast.LENGTH_SHORT).show();
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
@@ -1313,6 +1585,537 @@ public class Main extends XposedModule {
             if (on) overwriteTextFile(EXPERT_UNLOCK_FILE, "");
             else ef.delete();
         } catch (Throwable ignored) {}
+    }
+
+    static boolean hasAcceptedExperimentalDisclaimer() {
+        BufferedReader reader = null;
+        try {
+            File marker = new File(EXPERIMENTAL_DISCLAIMER_FILE);
+            if (!marker.isFile()) return false;
+            reader = new BufferedReader(new FileReader(marker));
+            return EXPERIMENTAL_DISCLAIMER_VERSION.equals(reader.readLine());
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            if (reader != null) try { reader.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    static boolean acceptExperimentalDisclaimer() {
+        try {
+            FileWriter writer = new FileWriter(EXPERIMENTAL_DISCLAIMER_FILE, false);
+            writer.write(EXPERIMENTAL_DISCLAIMER_VERSION);
+            writer.write('\n');
+            writer.close();
+            return true;
+        } catch (Throwable t) {
+            log("experimental disclaimer marker err: " + safeThrowableMessage(t));
+            return false;
+        }
+    }
+
+    static boolean isGoogleLoginUnlock() {
+        return new File(GOOGLE_LOGIN_UNLOCK_FILE).exists();
+    }
+
+    static void setGoogleLoginUnlock(boolean on) {
+        try {
+            File flag = new File(GOOGLE_LOGIN_UNLOCK_FILE);
+            if (on) overwriteTextFile(GOOGLE_LOGIN_UNLOCK_FILE, "");
+            else flag.delete();
+        } catch (Throwable ignored) {}
+    }
+
+    static boolean isWechatMobileLoginUnlock() {
+        return new File(WECHAT_MOBILE_LOGIN_UNLOCK_FILE).exists();
+    }
+
+    static void setWechatMobileLoginUnlock(boolean on) {
+        try {
+            File flag = new File(WECHAT_MOBILE_LOGIN_UNLOCK_FILE);
+            if (on) overwriteTextFile(WECHAT_MOBILE_LOGIN_UNLOCK_FILE, "");
+            else flag.delete();
+        } catch (Throwable ignored) {}
+    }
+
+    static final class LocalApiBackgroundState {
+        final boolean dozeExempt;
+        final boolean backgroundRestricted;
+        final String error;
+
+        LocalApiBackgroundState(boolean dozeExempt, boolean backgroundRestricted, String error) {
+            this.dozeExempt = dozeExempt;
+            this.backgroundRestricted = backgroundRestricted;
+            this.error = error == null ? "" : error;
+        }
+
+        boolean allowed() {
+            return dozeExempt && !backgroundRestricted && error.length() == 0;
+        }
+
+        String describe(boolean approved) {
+            StringBuilder out = new StringBuilder();
+            out.append("电池优化：").append(dozeExempt ? "✓ 已设为不优化/不限制" : "✗ 仍受电池优化限制")
+                    .append("\n后台活动：").append(backgroundRestricted
+                            ? "✗ 系统禁止后台活动" : "✓ 系统允许后台活动")
+                    .append("\n首次放行：").append(approved && allowed()
+                            ? "✓ 校验通过" : "✗ 尚未通过校验");
+            if (error.length() > 0) out.append("\n检测错误：").append(error);
+            return out.toString();
+        }
+    }
+
+    static LocalApiBackgroundState localApiBackgroundState(Context context) {
+        if (context == null) {
+            return new LocalApiBackgroundState(false, true, "DeepSeek 上下文尚未就绪");
+        }
+        boolean dozeExempt = false;
+        boolean restricted = false;
+        String error = "";
+        try {
+            PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (power == null) error = "无法读取电池优化状态";
+            else dozeExempt = power.isIgnoringBatteryOptimizations(TARGET);
+        } catch (Throwable t) {
+            error = "电池优化检测失败：" + safeThrowableMessage(t);
+        }
+        if (Build.VERSION.SDK_INT >= 28) {
+            try {
+                ActivityManager manager = (ActivityManager)
+                        context.getSystemService(Context.ACTIVITY_SERVICE);
+                restricted = manager == null || manager.isBackgroundRestricted();
+                if (manager == null && error.length() == 0) error = "无法读取后台活动状态";
+            } catch (Throwable t) {
+                restricted = true;
+                if (error.length() == 0) {
+                    error = "后台活动检测失败：" + safeThrowableMessage(t);
+                }
+            }
+        }
+        return new LocalApiBackgroundState(dozeExempt, restricted, error);
+    }
+
+    static boolean isLocalApiBackgroundApproved(Context context) {
+        return new File(LOCAL_API_BACKGROUND_READY_FILE).exists()
+                && localApiBackgroundState(context).allowed();
+    }
+
+    static String localApiBackgroundStatus(Context context) {
+        return localApiBackgroundState(context).describe(
+                new File(LOCAL_API_BACKGROUND_READY_FILE).exists());
+    }
+
+    static boolean verifyLocalApiBackground(Activity activity) {
+        LocalApiBackgroundState state = localApiBackgroundState(activity);
+        try {
+            if (state.allowed()) overwriteTextFile(LOCAL_API_BACKGROUND_READY_FILE,
+                    String.valueOf(System.currentTimeMillis()));
+            else new File(LOCAL_API_BACKGROUND_READY_FILE).delete();
+        } catch (Throwable t) {
+            log("local API background marker update failed: " + t);
+            return false;
+        }
+        if (!state.allowed()) {
+            LocalApiGateway.stop();
+            requestLocalApiKeepAlive(activity, false);
+            return false;
+        }
+        if (isLocalApiEnabled()) {
+            requestLocalApiKeepAlive(activity, true);
+            startLocalApiGateway(activity);
+        }
+        return true;
+    }
+
+    static boolean openLocalApiBatterySettings(Activity activity) {
+        if (activity == null || activity.isFinishing()) return false;
+        Intent[] intents = new Intent[]{
+                new Intent("android.settings.VIEW_ADVANCED_POWER_USAGE_DETAIL")
+                        .setData(Uri.parse("package:" + TARGET)),
+                new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.parse("package:" + TARGET)),
+                new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        };
+        for (Intent intent : intents) {
+            try {
+                activity.startActivityForResult(intent, LOCAL_API_BATTERY_REQUEST);
+                return true;
+            } catch (Throwable ignored) {}
+        }
+        return false;
+    }
+
+    static boolean isLocalApiEnabled() {
+        return new File(LOCAL_API_ENABLED_FILE).exists();
+    }
+
+    static boolean setLocalApiEnabled(boolean on) {
+        Main module = MODULE;
+        Activity activity = module == null ? null : module.curAct.get();
+        if (on && !isLocalApiBackgroundApproved(activity)) {
+            log("local API enable rejected: unrestricted background access not verified");
+            LocalApiGateway.stop();
+            return false;
+        }
+        try {
+            File flag = new File(LOCAL_API_ENABLED_FILE);
+            if (on) overwriteTextFile(LOCAL_API_ENABLED_FILE, "");
+            else flag.delete();
+        } catch (Throwable t) {
+            log("local API marker update failed: " + t);
+            return false;
+        }
+        if (on && activity != null) {
+            requestLocalApiKeepAlive(activity, true);
+            startLocalApiGateway(activity);
+        }
+        if (!on) {
+            LocalApiGateway.stop();
+            if (activity != null) requestLocalApiKeepAlive(activity, false);
+            if (module != null) {
+                new Thread(new Runnable() {
+                    @Override public void run() {
+                        Main current = MODULE;
+                        if (current != null) current.deleteReusableApiSessions();
+                    }
+                }, "Deekseep-API-Cleanup").start();
+            }
+        }
+        return true;
+    }
+
+    static String localApiConnectionInfo() {
+        return LocalApiGateway.connectionInfo();
+    }
+
+    static String rotateLocalApiKey(Activity activity) {
+        String key = LocalApiGateway.rotateKey(activity);
+        return key == null ? "密钥轮换失败：请先打开 DeepSeek" : LocalApiGateway.connectionInfo();
+    }
+
+    static String setCustomLocalApiKey(Activity activity, String key) {
+        String error = LocalApiGateway.setCustomKey(activity, key);
+        return error == null ? "保存成功" : error;
+    }
+
+    static String localApiEndpoint() { return LocalApiGateway.endpoint(); }
+
+    static String localApiProtocol() { return LocalApiGateway.protocolMode(); }
+
+    static void setLocalApiProtocol(Activity activity, String protocol) {
+        LocalApiGateway.setProtocolMode(activity, protocol);
+    }
+
+    static String localApiKey() { return LocalApiGateway.apiKey(); }
+
+    static String localApiRuntimeStatus() { return LocalApiGateway.runtimeStatus(); }
+
+    private static void startLocalApiGateway(Context context) {
+        if (context == null || !isLocalApiEnabled()
+                || !isLocalApiBackgroundApproved(context)) return;
+        final Context appContext = context.getApplicationContext();
+        LocalApiGateway.start(appContext, new LocalApiGateway.Backend() {
+            @Override public boolean isReady() {
+                return isLocalApiBackgroundApproved(appContext)
+                        && hostClassLoader != null && liveR92 != null && liveQ71 != null;
+            }
+
+            @Override public String readinessDetail() {
+                if (!isLocalApiBackgroundApproved(appContext)) return "后台运行权限未通过校验";
+                if (hostClassLoader == null) return "等待宿主类加载器";
+                if (liveR92 == null && liveQ71 == null) return "等待原生传输与 PoW 初始化";
+                if (liveR92 == null) return "等待原生传输初始化";
+                if (liveQ71 == null) return "等待 PoW 初始化";
+                return "原生传输已就绪（排队 "
+                        + LOCAL_API_COMPLETION_SLOTS.getQueueLength() + "）";
+            }
+
+            @Override public LocalApiGateway.CompletionResult complete(
+                    LocalApiGateway.CompletionRequest request,
+                    LocalApiGateway.DeltaSink sink) throws Exception {
+                Main module = MODULE;
+                if (module == null) {
+                    throw new LocalApiGateway.GatewayException(503, "host_not_ready",
+                            "server_error", "Deekseep hook instance is unavailable");
+                }
+                return module.executeLocalApiCompletion(request, sink);
+            }
+        });
+    }
+
+    /**
+     * DeepSeek login mapping:
+     *   cy4.b = List&lt;px4&gt;, px4.a = Google, px4.b = SMS/mobile, px4.f = WeChat.
+     * dy4 only changes which native items are present for a region; gy4 keeps the real click
+     * routes. Hook both the copy method and constructors so interpreted, JIT and inlined state
+     * creation paths all converge on the same two-switch policy.
+     */
+    private void hookRegionalLoginUnlock(final ClassLoader cl) {
+        try {
+            final Class<?> stateType = cl.loadClass("cy4");
+            final Class<?> optionType = cl.loadClass("px4");
+            Field googleField = optionType.getDeclaredField("a");
+            Field mobileField = optionType.getDeclaredField("b");
+            Field wechatField = optionType.getDeclaredField("f");
+            googleField.setAccessible(true);
+            mobileField.setAccessible(true);
+            wechatField.setAccessible(true);
+            final Object googleOption = googleField.get(null);
+            final Object mobileOption = mobileField.get(null);
+            final Object wechatOption = wechatField.get(null);
+            int constructors = 0;
+            int copies = 0;
+
+            for (Constructor<?> ctor : stateType.getDeclaredConstructors()) {
+                final int listIndex = findAssignableParameter(ctor.getParameterTypes(), List.class);
+                if (listIndex < 0) continue;
+                hook(ctor).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        return proceedWithRegionalLoginOptions(chain, listIndex, googleOption,
+                                wechatOption, mobileOption, optionType);
+                    }
+                });
+                try { deoptimize(ctor); } catch (Throwable t) {
+                    log("regional login ctor deopt skipped: " + t);
+                }
+                constructors++;
+            }
+
+            for (Method method : stateType.getDeclaredMethods()) {
+                if (!java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                        || method.getReturnType() != stateType) continue;
+                final int listIndex = findAssignableParameter(method.getParameterTypes(), List.class);
+                if (listIndex < 0) continue;
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        return proceedWithRegionalLoginOptions(chain, listIndex, googleOption,
+                                wechatOption, mobileOption, optionType);
+                    }
+                });
+                try { deoptimize(method); } catch (Throwable t) {
+                    log("regional login state-copy deopt skipped: " + t);
+                }
+                copies++;
+            }
+            log("hooked native regional login options: cy4 ctors=" + constructors
+                    + ", copies=" + copies + ", google=" + isGoogleLoginUnlock()
+                    + ", wechatMobile=" + isWechatMobileLoginUnlock());
+        } catch (Throwable t) {
+            log("hookRegionalLoginUnlock failed: " + t);
+        }
+    }
+
+    private Object proceedWithRegionalLoginOptions(Chain chain, int listIndex,
+                                                   Object googleOption, Object wechatOption,
+                                                   Object mobileOption, Class<?> optionType)
+            throws Throwable {
+        boolean unlockGoogle = isGoogleLoginUnlock();
+        boolean unlockWechatMobile = isWechatMobileLoginUnlock();
+        if (!unlockGoogle && !unlockWechatMobile) return chain.proceed();
+        try {
+            Object[] args = chain.getArgs().toArray();
+            List<?> original = args[listIndex] instanceof List ? (List<?>) args[listIndex] : null;
+            List<?> unlocked = original;
+            if (unlockGoogle) {
+                unlocked = GoogleLoginUnlock.ensureGoogleFirst(
+                        unlocked, googleOption, optionType);
+            }
+            if (unlockWechatMobile) {
+                unlocked = GoogleLoginUnlock.ensureWechatAndMobile(
+                        unlocked, googleOption, wechatOption, mobileOption, optionType);
+            }
+            if (unlocked != null && unlocked != original) {
+                args[listIndex] = unlocked;
+                if (unlockGoogle && !googleLoginUnlockInjectedLogged
+                        && unlocked.contains(googleOption) && !original.contains(googleOption)) {
+                    googleLoginUnlockInjectedLogged = true;
+                    log("native Google login option injected; preserved domestic options="
+                            + original.size());
+                }
+                if (unlockWechatMobile && !wechatMobileLoginUnlockInjectedLogged
+                        && (unlocked.contains(wechatOption) || unlocked.contains(mobileOption))) {
+                    wechatMobileLoginUnlockInjectedLogged = true;
+                    log("native WeChat + mobile login options enabled; original options="
+                            + original.size() + ", unlocked options=" + unlocked.size());
+                }
+                return chain.proceed(args);
+            }
+        } catch (Throwable t) {
+            log("regional login option injection skipped: " + t);
+        }
+        return chain.proceed();
+    }
+
+    private static int findAssignableParameter(Class<?>[] types, Class<?> wanted) {
+        if (types == null || wanted == null) return -1;
+        for (int i = 0; i < types.length; i++) {
+            if (wanted.isAssignableFrom(types[i])) return i;
+        }
+        return -1;
+    }
+
+    /** Installs the no-op endpoint used by the module's foreground keepalive service. */
+    private void installLocalApiKeepAliveReceiverHook(ClassLoader cl) {
+        try {
+            Class<?> receiverClass = Class.forName(
+                    LocalApiKeepAliveService.TARGET_RECEIVER, false, cl);
+            Method onReceive = receiverClass.getDeclaredMethod(
+                    "onReceive", Context.class, Intent.class);
+            onReceive.setAccessible(true);
+            hook(onReceive).intercept(new Hooker() {
+                @Override public Object intercept(Chain chain) throws Throwable {
+                    Intent intent = chain.getArg(1) instanceof Intent
+                            ? (Intent) chain.getArg(1) : null;
+                    if (intent == null) {
+                        return chain.proceed();
+                    }
+                    String action = intent.getAction();
+                    boolean heartbeatAction = LocalApiKeepAliveService.ACTION_HEARTBEAT
+                            .equals(action);
+                    boolean controlAction = LocalApiKeepAliveService.ACTION_CONTROL
+                            .equals(action);
+                    if (!heartbeatAction && !controlAction) return chain.proceed();
+                    if (!LocalApiKeepAliveService.CONTROL_TOKEN.equals(
+                            intent.getStringExtra(LocalApiKeepAliveService.EXTRA_CONTROL_TOKEN))) {
+                        log("rejected unauthenticated local API internal control");
+                        return null;
+                    }
+                    Context context = chain.getArg(0) instanceof Context
+                            ? (Context) chain.getArg(0) : null;
+                    if (controlAction) {
+                        String protocol = intent.getStringExtra(
+                                LocalApiKeepAliveService.EXTRA_PROTOCOL);
+                        if (LocalApiGateway.PROTOCOL_OPENAI.equals(protocol)
+                                || LocalApiGateway.PROTOCOL_ANTHROPIC.equals(protocol)) {
+                            LocalApiGateway.setProtocolMode(context, protocol);
+                        }
+                        return null;
+                    }
+                    boolean active = context != null && isLocalApiEnabled()
+                            && isLocalApiBackgroundApproved(context);
+                    localApiKeepAliveHeartbeatAt = SystemClock.elapsedRealtime();
+                    localApiKeepAliveError = "";
+                    if (active) {
+                        startLocalApiGateway(context);
+                    } else if (LocalApiGateway.isRunning()) {
+                        LocalApiGateway.stop();
+                    }
+                    Object receiver = chain.getThisObject();
+                    if (receiver instanceof BroadcastReceiver
+                            && ((BroadcastReceiver) receiver).isOrderedBroadcast()) {
+                        BroadcastReceiver ordered = (BroadcastReceiver) receiver;
+                        ordered.setResultCode(Activity.RESULT_OK);
+                        ordered.setResultData((active ? "enabled" : "disabled") + "|"
+                                + (LocalApiGateway.isRunning() ? "running" : "stopped"));
+                    }
+                    return null;
+                }
+            });
+            log("local API cached-freezer keepalive receiver installed");
+        } catch (Throwable t) {
+            localApiKeepAliveError = "保活接收器安装失败：" + safeThrowableMessage(t);
+            log("local API keepalive receiver hook failed: " + t);
+        }
+    }
+
+    private static boolean requestLocalApiKeepAlive(Context context, boolean enabled) {
+        if (context == null) {
+            localApiKeepAliveError = "DeepSeek 上下文尚未就绪";
+            return false;
+        }
+        long now = SystemClock.elapsedRealtime();
+        long heartbeatAge = localApiKeepAliveHeartbeatAt <= 0L ? Long.MAX_VALUE
+                : Math.max(0L, now - localApiKeepAliveHeartbeatAt);
+        if (enabled && heartbeatAge <= 15_000L) return true;
+        if (!enabled && heartbeatAge == Long.MAX_VALUE && !localApiKeepAliveControlLogged) {
+            return true;
+        }
+        // The trampoline finishes immediately and resumes DeepSeek. Throttle that onResume so it
+        // cannot open the trampoline again before the first five-second heartbeat arrives.
+        if (now - localApiKeepAliveLaunchAt < 3_000L) return true;
+        Uri uri = new Uri.Builder()
+                .scheme(LocalApiKeepAliveActivity.SCHEME)
+                .authority(LocalApiKeepAliveActivity.HOST)
+                .appendQueryParameter(LocalApiKeepAliveActivity.QUERY_MODE,
+                        enabled ? LocalApiKeepAliveActivity.MODE_START
+                                : LocalApiKeepAliveActivity.MODE_STOP)
+                .appendQueryParameter(LocalApiKeepAliveActivity.QUERY_TOKEN,
+                        LocalApiKeepAliveService.CONTROL_TOKEN)
+                .build();
+        Intent control = new Intent(Intent.ACTION_VIEW, uri)
+                .addCategory(Intent.CATEGORY_BROWSABLE)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_NO_ANIMATION
+                        | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        try {
+            context.startActivity(control);
+            localApiKeepAliveLaunchAt = now;
+            if (enabled && !localApiKeepAliveControlLogged) {
+                localApiKeepAliveControlLogged = true;
+                log("local API keepalive trampoline launched");
+            } else if (!enabled && localApiKeepAliveControlLogged) {
+                log("local API keepalive stop trampoline launched");
+                localApiKeepAliveControlLogged = false;
+                localApiKeepAliveHeartbeatAt = 0L;
+            }
+            localApiKeepAliveError = "";
+            return true;
+        } catch (Throwable t) {
+            localApiKeepAliveError = (enabled ? "启动" : "停止")
+                    + "前台保活失败：" + safeThrowableMessage(t);
+            log("local API keepalive control failed enabled=" + enabled + ": " + t);
+            return false;
+        }
+    }
+
+    static String localApiKeepAliveStatus() {
+        if (!isLocalApiEnabled()) return "前台保活：未启用";
+        long heartbeat = localApiKeepAliveHeartbeatAt;
+        long age = heartbeat <= 0L ? -1L
+                : Math.max(0L, SystemClock.elapsedRealtime() - heartbeat);
+        if (age >= 0L && age <= 15_000L) {
+            return "前台保活：✓ 已连接（最近心跳 " + Math.max(0L, age / 1000L) + " 秒前）";
+        }
+        String error = localApiKeepAliveError;
+        if (error != null && error.length() > 0) return "前台保活：✗ " + error;
+        return "前台保活：正在等待 DeepSeek 心跳";
+    }
+
+    /**
+     * Reports actual target-scope injection to the module app.  The exported provider validates
+     * the Binder caller UID against com.deepseek.chat before persisting this heartbeat, so an
+     * arbitrary app cannot make the launcher claim that the DeepSeek scope is active.
+     */
+    private static void reportActivationHeartbeat(Activity act) {
+        if (act == null) return;
+        long now = System.currentTimeMillis();
+        if (now - activationHeartbeatAttemptAt < 60_000L) return;
+        activationHeartbeatAttemptAt = now;
+        try {
+            Bundle extras = new Bundle();
+            extras.putString("package", act.getPackageName());
+            try {
+                android.content.pm.PackageInfo info = act.getPackageManager()
+                        .getPackageInfo(act.getPackageName(), 0);
+                extras.putString("versionName", info.versionName);
+                extras.putLong("versionCode", Build.VERSION.SDK_INT >= 28
+                        ? info.getLongVersionCode() : info.versionCode);
+            } catch (Throwable ignored) {}
+            Bundle reply = act.getContentResolver().call(
+                    Uri.parse("content://" + XposedActivationProvider.AUTHORITY),
+                    XposedActivationProvider.METHOD_REPORT_TARGET_ACTIVE, null, extras);
+            boolean accepted = reply != null && reply.getBoolean("accepted", false);
+            if (accepted && !activationHeartbeatLogged) {
+                activationHeartbeatLogged = true;
+                log("activation heartbeat accepted by module provider");
+            }
+        } catch (Throwable t) {
+            if (!activationHeartbeatLogged) {
+                log("activation heartbeat unavailable: " + t);
+            }
+        }
     }
 
     // 视觉中继开关：与 expert 解锁同一个开关（解锁开启即中继开启）。
@@ -1465,12 +2268,17 @@ public class Main extends XposedModule {
                 hook(ctor).intercept(new Hooker() {
                     @Override public Object intercept(Chain chain) throws Throwable {
                         try {
+                            // API callers already supplied their system/developer messages in the
+                            // translated prompt. Do not silently prepend the UI's global prompt.
+                            if (Boolean.TRUE.equals(tlLocalApiRequest.get())) {
+                                return chain.proceed();
+                            }
                             String sysPrompt = readPrompt();
                             if (sysPrompt != null && !sysPrompt.isEmpty()) {
                                 Object[] args = chain.getArgs().toArray();
                                 String orig = (String) args[promptIdx];
                                 if (orig == null) orig = "";
-                                args[promptIdx] = "<system>\n" + sysPrompt + "\n</system>\n\n" + orig;
+                                args[promptIdx] = HistoryBridge.wrapSystemPrompt(sysPrompt, orig);
                                 log("injected system prompt (synthetic=" + isSynthetic + ")");
                                 return chain.proceed(args);
                             }
@@ -1778,6 +2586,8 @@ public class Main extends XposedModule {
                                     srvLog(dumpStack());
                                 }
                                 if (isNoCensor()) {
+                                    markFilteredOriginal(cl, chain.getThisObject(),
+                                            "mv.i/" + path);
                                     log("skipped CONTENT_FILTER patch mv.i(" + path + ")");
                                     if (isSrvLog()) srvLog("[CF] skipped mv.i(" + path + ")");
                                     return null; // 跳过原 void 方法
@@ -1867,6 +2677,7 @@ public class Main extends XposedModule {
                             boolean cf = v.contains("CONTENT_FILTER");
                             if (isSrvLog()) srvLog("[SR] mv." + mn + "(" + v + ") nocensor=" + isNoCensor());
                             if (cf && isNoCensor()) {
+                                markFilteredOriginal(cl, chain.getThisObject(), "mv." + mn);
                                 log("blocked mv." + mn + "(" + v + ")");
                                 if (isSrvLog()) srvLog("[SR] blocked mv." + mn);
                                 return null;
@@ -1928,6 +2739,7 @@ public class Main extends XposedModule {
                             Object rawList = chain.getArg(1);
                             if (tp != null && rawList instanceof List) {
                                 List<?> list = (List<?>) rawList;
+                                String sid = String.valueOf(readHostField(tp, "a"));
                                 Map<?, ?> fmap = null;
                                 try { fmap = (Map<?, ?>) fField.get(tp); } catch (Throwable ignored) {}
                                 boolean nc = isNoCensor();
@@ -1936,22 +2748,34 @@ public class Main extends XposedModule {
                                 for (int i = 0; i < copy.size(); i++) {
                                     Object msg = copy.get(i);
                                     if (msg == null) continue;
+                                    preservePendingFilteredOriginal(cl, tp, msg);
                                     String status = callStr(msg, "D");
                                     String quasi = callStr(msg, "x");
-                                    boolean cf = (status != null && status.contains("CONTENT_FILTER"))
-                                            || (quasi != null && quasi.contains("CONTENT_FILTER"));
+                                    boolean cf = ResponsePreserver.isFilteredHostMessage(msg);
                                     Integer id = callInt(msg, "u");
                                     if (isSrvLog()) {
                                         srvLog("[FM] merge idx=" + i + " id=" + id
                                                 + " status=" + status + " quasi=" + quasi + " cf=" + cf);
                                     }
-                                    if (!cf || !nc || id == null || fmap == null) continue;
-                                    Object existing = fmap.get(id);
+                                    Object existing = id != null && fmap != null ? fmap.get(id) : null;
+                                    if (existing != null && existing != msg) {
+                                        preservePendingFilteredOriginal(cl, tp, existing);
+                                    }
+                                    Object durable = nc
+                                            ? ResponsePreserver.restoreHostMessage(cl, sid, msg) : null;
+                                    if (durable != null) {
+                                        copy.set(i, durable);
+                                        changed = true;
+                                        log("restored preserved response sid=" + sid + " msg=" + id
+                                                + " before final merge");
+                                        if (isSrvLog()) srvLog("[FM] restored durable id=" + id);
+                                        continue;
+                                    }
+                                    if (!cf || !nc || id == null || existing == null) continue;
                                     if (existing == null || existing == msg) continue;
                                     String exStatus = callStr(existing, "D");
                                     String exQuasi = callStr(existing, "x");
-                                    boolean exCf = (exStatus != null && exStatus.contains("CONTENT_FILTER"))
-                                            || (exQuasi != null && exQuasi.contains("CONTENT_FILTER"));
+                                    boolean exCf = ResponsePreserver.isFilteredHostMessage(existing);
                                     if (exCf) continue;
                                     copy.set(i, existing);
                                     changed = true;
@@ -1994,10 +2818,11 @@ public class Main extends XposedModule {
                             Object tp = chain.getThisObject();
                             Object msg = chain.getArg(0);
                             if (tp != null && msg != null) {
+                                String sid = String.valueOf(readHostField(tp, "a"));
+                                preservePendingFilteredOriginal(cl, tp, msg);
                                 String status = callStr(msg, "D");
                                 String quasi = callStr(msg, "x");
-                                boolean cf = (status != null && status.contains("CONTENT_FILTER"))
-                                        || (quasi != null && quasi.contains("CONTENT_FILTER"));
+                                boolean cf = ResponsePreserver.isFilteredHostMessage(msg);
                                 Integer id = callInt(msg, "u");
                                 if (isSrvLog())
                                     srvLog("[FA] tp." + mn + " id=" + id + " status=" + status
@@ -2006,10 +2831,21 @@ public class Main extends XposedModule {
                                     Map<?, ?> fmap = (Map<?, ?>) fField.get(tp);
                                     Object existing = fmap != null ? fmap.get(id) : null;
                                     if (existing != null && existing != msg) {
+                                        preservePendingFilteredOriginal(cl, tp, existing);
+                                    }
+                                    Object durable = ResponsePreserver.restoreHostMessage(cl, sid, msg);
+                                    if (durable != null) {
+                                        Object[] args = chain.getArgs().toArray();
+                                        args[0] = durable;
+                                        log("restored preserved response sid=" + sid + " msg=" + id
+                                                + " in tp." + mn);
+                                        if (isSrvLog()) srvLog("[FA] restored durable id=" + id);
+                                        return chain.proceed(args);
+                                    }
+                                    if (existing != null && existing != msg) {
                                         String exS = callStr(existing, "D");
                                         String exQ = callStr(existing, "x");
-                                        boolean exCf = (exS != null && exS.contains("CONTENT_FILTER"))
-                                                || (exQ != null && exQ.contains("CONTENT_FILTER"));
+                                        boolean exCf = ResponsePreserver.isFilteredHostMessage(existing);
                                         if (!exCf) {
                                             Object[] args = chain.getArgs().toArray();
                                             args[0] = existing;
@@ -2050,6 +2886,66 @@ public class Main extends XposedModule {
         } catch (Throwable t) { return null; }
     }
 
+    /**
+     * A live mv still contains the uncensored text when the replacement patch arrives.  Keep a
+     * weak marker immediately, then save the host's exact static kv as soon as its owning tp/SID
+     * is known.  No message content is written to diagnostics.
+     */
+    private static void markFilteredOriginal(ClassLoader cl, Object message, String source) {
+        if (message == null) return;
+        FILTERED_ORIGINAL_MESSAGES.put(message, Boolean.TRUE);
+        String sid = findNativeSessionContainingMessage(message);
+        if (sid != null && ResponsePreserver.saveHostMessage(cl, sid, message)) {
+            log("preserved original response sid=" + sid + " msg=" + callInt(message, "u")
+                    + " after " + source);
+        }
+    }
+
+    private static void preservePendingFilteredOriginal(ClassLoader cl, Object session,
+                                                         Object message) {
+        if (session == null || message == null
+                || !FILTERED_ORIGINAL_MESSAGES.containsKey(message)) return;
+        String sid = String.valueOf(readHostField(session, "a"));
+        if (ResponsePreserver.saveHostMessage(cl, sid, message)) {
+            FILTERED_ORIGINAL_MESSAGES.remove(message);
+            log("finalized preserved response sid=" + sid + " msg=" + callInt(message, "u"));
+        }
+    }
+
+    private static String findNativeSessionContainingMessage(Object message) {
+        Object sessions = NATIVE_SESSION_LIST;
+        if (sessions instanceof List) {
+            try {
+                for (Object session : new ArrayList<Object>((List) sessions)) {
+                    if (nativeSessionContainsMessage(session, message)) {
+                        return String.valueOf(readHostField(session, "a"));
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+        synchronized (LOCAL_NATIVE_SESSIONS) {
+            try {
+                for (Map.Entry<String, Object> entry : LOCAL_NATIVE_SESSIONS.entrySet()) {
+                    if (nativeSessionContainsMessage(entry.getValue(), message)) {
+                        return entry.getKey();
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+        return null;
+    }
+
+    private static boolean nativeSessionContainsMessage(Object session, Object message) {
+        Object messages = readHostField(session, "f");
+        if (!(messages instanceof Map)) return false;
+        try {
+            for (Object candidate : new ArrayList<Object>(((Map) messages).values())) {
+                if (candidate == message) return true;
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
     private String readPrompt() {
         try {
             File ef = new File(ENABLED_FILE);
@@ -2066,6 +2962,1048 @@ public class Main extends XposedModule {
 
     // ── 设置页入口生命周期 ─────────────────────────────────────────
 
+    private void installImageCredentialBridge(final ClassLoader cl) {
+        int installed = 0;
+        try {
+            Class<?> apiClass = cl.loadClass("pv0");
+            for (Constructor<?> ctor : apiClass.getDeclaredConstructors()) {
+                hook(ctor).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object result = chain.proceed();
+                        IMAGE_FILE_API = chain.getThisObject();
+                        IMAGE_HOST_CL = cl;
+                        return result;
+                    }
+                });
+                installed++;
+            }
+        } catch (Throwable t) { log("capture pv0 failed: " + t); }
+
+        // 兜底：即使 pv0 比模块安装钩子更早构造，也能从之后创建的 k31.c.d 取回同一实例。
+        try {
+            Class<?> composerClass = cl.loadClass("k31");
+            for (Constructor<?> ctor : composerClass.getDeclaredConstructors()) {
+                hook(ctor).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object result = chain.proceed();
+                        try {
+                            IMAGE_COMPOSER = chain.getThisObject();
+                            Object repository = readHostField(chain.getThisObject(), "c");
+                            Object api = readHostField(repository, "d");
+                            if (api != null) {
+                                IMAGE_FILE_API = api;
+                                IMAGE_HOST_CL = cl;
+                            }
+                        } catch (Throwable ignored) {}
+                        return result;
+                    }
+                });
+                installed++;
+            }
+        } catch (Throwable t) { log("capture k31 file api failed: " + t); }
+        log("installed image credential bridge constructors=" + installed);
+    }
+
+    static void pickGalleryImage(Activity act, GalleryPickCallback callback) {
+        if (act == null || callback == null) return;
+        galleryPickCallback = callback;
+        try {
+            Intent intent;
+            if (Build.VERSION.SDK_INT >= 33) {
+                intent = new Intent(MediaStore.ACTION_PICK_IMAGES);
+                intent.setType("image/*");
+            } else {
+                intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("image/*");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            }
+            act.startActivityForResult(intent, PICK_IMAGE_REQUEST);
+        } catch (Throwable t) {
+            galleryPickCallback = null;
+            log("open gallery picker failed: " + t);
+            callback.onPicked(null);
+        }
+    }
+
+    /** Persists a newly selected gallery image for stable local-history rendering. */
+    static JSONObject uploadGalleryImage(Activity act, final Uri uri, final String model) {
+        if (act == null || uri == null) return null;
+        Cursor cursor = null;
+        String name = null;
+        long size = -1L;
+        try {
+            cursor = act.getContentResolver().query(uri,
+                    new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE},
+                    null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameCol = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int sizeCol = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (nameCol >= 0 && !cursor.isNull(nameCol)) name = cursor.getString(nameCol);
+                if (sizeCol >= 0 && !cursor.isNull(sizeCol)) size = cursor.getLong(sizeCol);
+            }
+        } catch (Throwable ignored) {
+        } finally { if (cursor != null) try { cursor.close(); } catch (Throwable ignored) {} }
+        if (size < 0) {
+            try {
+                android.content.res.AssetFileDescriptor descriptor =
+                        act.getContentResolver().openAssetFileDescriptor(uri, "r");
+                if (descriptor != null) {
+                    size = descriptor.getLength();
+                    descriptor.close();
+                }
+            } catch (Throwable ignored) {}
+        }
+        if (name == null || name.trim().length() == 0) name = "gallery_image.jpg";
+        if (size < 0) size = 0L;
+        final String uploadName = name;
+        final long uploadSize = size;
+        final JSONObject durable = persistGalleryImage(act, uri, uploadName, uploadSize);
+        if (durable == null) {
+            log("gallery persistence failed name=" + uploadName);
+            return null;
+        }
+        log("gallery stored durably name=" + uploadName
+                + " id=" + durable.optString("id", "")
+                + " path=" + durable.optString("signed_path", ""));
+        return durable;
+    }
+
+    /**
+     * Keeps a master copy under files/ and a FileProvider-visible mirror under cache/captured/.
+     * The cache mirror is restored on every process start, so Android cache eviction cannot turn
+     * an edited historical message into a broken image after DeepSeek is reopened.
+     */
+    private static JSONObject persistGalleryImage(Activity act, Uri uri, String displayName,
+                                                  long reportedSize) {
+        File master = null;
+        try {
+            File masterDir = new File(EDITOR_IMAGE_MASTER_DIR);
+            File cacheDir = new File(EDITOR_IMAGE_CACHE_DIR);
+            if ((!masterDir.exists() && !masterDir.mkdirs())
+                    || (!cacheDir.exists() && !cacheDir.mkdirs())) return null;
+            String extension = galleryExtension(act, uri, displayName);
+            String storedName = "deekseep_editor_"
+                    + java.util.UUID.randomUUID().toString().replace("-", "") + extension;
+            master = new File(masterDir, storedName);
+            if (!copyUriToFile(act, uri, master) || master.length() <= 0) return null;
+            File mirror = new File(cacheDir, storedName);
+            if (!copyFile(master, mirror)) return null;
+
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(master.getPath(), bounds);
+            double now = System.currentTimeMillis() / 1000.0d;
+            JSONObject out = new JSONObject();
+            out.put("id", "deekseep-local-" + java.util.UUID.randomUUID());
+            out.put("status", "SUCCESS");
+            out.put("file_name", displayName == null || displayName.trim().length() == 0
+                    ? storedName : displayName);
+            out.put("file_size", master.length() > 0 ? master.length() : reportedSize);
+            out.put("inserted_at", now);
+            out.put("updated_at", now);
+            out.put("token_usage", JSONObject.NULL);
+            out.put("previewable", true);
+            out.put("from_share", false);
+            out.put("signed_path", EDITOR_IMAGE_URI_PREFIX + Uri.encode(storedName));
+            out.put("is_image", true);
+            out.put("audit_result", "pass");
+            out.put("width", bounds.outWidth > 0 ? Integer.valueOf(bounds.outWidth) : JSONObject.NULL);
+            out.put("height", bounds.outHeight > 0 ? Integer.valueOf(bounds.outHeight) : JSONObject.NULL);
+            out.put("retryable", false);
+            return out;
+        } catch (Throwable t) {
+            log("persist gallery image failed: " + t);
+            return null;
+        }
+    }
+
+    private static String galleryExtension(Activity act, Uri uri, String displayName) {
+        String ext = "";
+        if (displayName != null) {
+            int dot = displayName.lastIndexOf('.');
+            if (dot >= 0 && dot + 1 < displayName.length()) {
+                String candidate = displayName.substring(dot + 1).toLowerCase(Locale.US);
+                if (candidate.matches("[a-z0-9]{1,5}")) ext = "." + candidate;
+            }
+        }
+        if (ext.length() == 0) {
+            String mime = null;
+            try { mime = act.getContentResolver().getType(uri); } catch (Throwable ignored) {}
+            if ("image/png".equals(mime)) ext = ".png";
+            else if ("image/webp".equals(mime)) ext = ".webp";
+            else if ("image/gif".equals(mime)) ext = ".gif";
+            else ext = ".jpg";
+        }
+        return ext;
+    }
+
+    private static boolean copyUriToFile(Activity act, Uri uri, File target) {
+        InputStream in = null;
+        OutputStream out = null;
+        try {
+            in = act.getContentResolver().openInputStream(uri);
+            if (in == null) return false;
+            out = new FileOutputStream(target, false);
+            byte[] buffer = new byte[32768];
+            int count;
+            while ((count = in.read(buffer)) >= 0) {
+                if (count > 0) out.write(buffer, 0, count);
+            }
+            out.flush();
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            if (in != null) try { in.close(); } catch (Throwable ignored) {}
+            if (out != null) try { out.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private static boolean copyFile(File source, File target) {
+        InputStream in = null;
+        OutputStream out = null;
+        try {
+            in = new FileInputStream(source);
+            out = new FileOutputStream(target, false);
+            byte[] buffer = new byte[32768];
+            int count;
+            while ((count = in.read(buffer)) >= 0) {
+                if (count > 0) out.write(buffer, 0, count);
+            }
+            out.flush();
+            target.setLastModified(source.lastModified());
+            return target.length() == source.length();
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            if (in != null) try { in.close(); } catch (Throwable ignored) {}
+            if (out != null) try { out.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    static void restoreLocalEditorImages() {
+        int restored = 0;
+        try {
+            File masterDir = new File(EDITOR_IMAGE_MASTER_DIR);
+            File cacheDir = new File(EDITOR_IMAGE_CACHE_DIR);
+            File[] files = masterDir.listFiles();
+            if (files == null || (!cacheDir.exists() && !cacheDir.mkdirs())) return;
+            for (File master : files) {
+                if (master == null || !master.isFile()
+                        || !master.getName().startsWith("deekseep_editor_")) continue;
+                File mirror = new File(cacheDir, master.getName());
+                if ((!mirror.isFile() || mirror.length() != master.length())
+                        && copyFile(master, mirror)) restored++;
+            }
+        } catch (Throwable t) {
+            log("restore local editor images failed: " + t);
+        }
+        if (restored > 0) log("restored local editor image mirrors=" + restored);
+    }
+
+    private static JSONObject ensureLocalEditorImage(JSONObject file) {
+        if (file == null) return null;
+        String path = file.optString("signed_path", "");
+        if (!path.startsWith(EDITOR_IMAGE_URI_PREFIX)) return null;
+        try {
+            String name = Uri.parse(path).getLastPathSegment();
+            if (name == null || !name.startsWith("deekseep_editor_")
+                    || name.contains("/") || name.contains("\\")) return null;
+            File master = new File(EDITOR_IMAGE_MASTER_DIR, name);
+            File mirror = new File(EDITOR_IMAGE_CACHE_DIR, name);
+            if (!mirror.isFile() || mirror.length() <= 0) {
+                if (!master.isFile() || master.length() <= 0 || !copyFile(master, mirror)) return null;
+            }
+            return new JSONObject(file.toString());
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Object readStaticHostField(Class<?> cls, String name) {
+        try {
+            Field field = cls.getDeclaredField(name);
+            field.setAccessible(true);
+            return field.get(null);
+        } catch (Throwable ignored) { return null; }
+    }
+
+    /** Mirrors k31.s(): upload behavior must follow the host's current R1 switch. */
+    private static boolean readGalleryThinkingEnabled() {
+        try {
+            Object composer = IMAGE_COMPOSER;
+            Object settings = readHostField(composer, "a");
+            Method method = settings.getClass().getDeclaredMethod("c");
+            method.setAccessible(true);
+            return Boolean.TRUE.equals(method.invoke(settings));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Object prepareGallerySource(final ClassLoader cl, final Object api,
+                                               final Object source, Class<?> sourceClass)
+            throws Throwable {
+        final Object composer = IMAGE_COMPOSER;
+        if (composer == null) return null;
+        Method found = null;
+        for (Method method : composer.getClass().getDeclaredMethods()) {
+            Class<?>[] p = method.getParameterTypes();
+            if ("o".equals(method.getName()) && p.length == 2
+                    && p[0].getName().equals(sourceClass.getName())) {
+                found = method; break;
+            }
+        }
+        if (found == null) return null;
+        found.setAccessible(true);
+        final Method preprocess = found;
+        Class<?> blockClass = cl.loadClass("mb3");
+        Object block = Proxy.newProxyInstance(cl, new Class<?>[]{blockClass},
+                new InvocationHandler() {
+                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                        if (isObjectMethod(method)) return objectMethod(proxy, method, args);
+                        Object continuation = args == null || args.length == 0
+                                ? null : args[args.length - 1];
+                        try {
+                            return preprocess.invoke(composer, source, continuation);
+                        } catch (java.lang.reflect.InvocationTargetException e) {
+                            throw e.getCause() == null ? e : e.getCause();
+                        }
+                    }
+                });
+        Object ready = runHostCoroutine(cl, api, block);
+        if (ready == null || !source.getClass().isInstance(ready)) return null;
+        log("gallery preprocessed name=" + readHostField(ready, "a")
+                + " size=" + readHostField(ready, "c") + " uri=" + readHostField(ready, "b"));
+        return ready;
+    }
+
+    /**
+     * Must run off the Android main thread. Returns a freshly signed host fp JSON, or null while
+     * leaving the caller's database untouched. If source and target models are equal, use a
+     * supported intermediate model because DeepSeek normally only forks when switching models.
+     */
+    static JSONObject refreshUploadedImageCredential(JSONObject oldFile,
+                                                       String sourceModel,
+                                                       String targetModel) {
+        if (oldFile == null) return null;
+        JSONObject local = ensureLocalEditorImage(oldFile);
+        if (local != null) return local;
+        String fileId = oldFile.optString("id", "").trim();
+        if (fileId.length() == 0) return null;
+        Object api = IMAGE_FILE_API;
+        ClassLoader cl = IMAGE_HOST_CL;
+        if (api == null || cl == null) {
+            log("image credential refresh unavailable: host pv0 not captured");
+            return null;
+        }
+        String from = sourceModel == null || sourceModel.trim().length() == 0
+                ? "default" : sourceModel.trim();
+        String to = targetModel == null || targetModel.trim().length() == 0
+                ? "default" : targetModel.trim();
+        try {
+            Object fresh;
+            if (from.equals(to)) {
+                String intermediate = "vision".equals(to) ? "default" : "vision";
+                Object midway = forkUploadedImageOnce(cl, api, fileId, from, intermediate);
+                if (midway == null) return null;
+                String midwayId = String.valueOf(readHostField(midway, "a"));
+                if (midwayId.length() == 0 || "null".equals(midwayId)) return null;
+                fresh = forkUploadedImageOnce(cl, api, midwayId, intermediate, to);
+            } else {
+                fresh = forkUploadedImageOnce(cl, api, fileId, from, to);
+            }
+            if (fresh == null) return null;
+            fresh = waitForUploadedImageReady(cl, api, fresh);
+            if (fresh == null) return null;
+            JSONObject json = hostFileToJson(fresh);
+            log("image credential refreshed from=" + from + " to=" + to
+                    + " old=" + fileId + " new=" + json.optString("id", ""));
+            return json;
+        } catch (Throwable t) {
+            Throwable cause = t instanceof java.lang.reflect.InvocationTargetException
+                    && ((java.lang.reflect.InvocationTargetException) t).getCause() != null
+                    ? ((java.lang.reflect.InvocationTargetException) t).getCause() : t;
+            log("image credential refresh failed: " + cause);
+            return null;
+        }
+    }
+
+    private static Object forkUploadedImageOnce(ClassLoader cl, Object api, String fileId,
+                                                 String fromModel, String toModel) throws Throwable {
+        Class<?> coroutine = cl.loadClass("a60");
+        Constructor<?> forkCtor = null;
+        for (Constructor<?> ctor : coroutine.getDeclaredConstructors()) {
+            Class<?>[] p = ctor.getParameterTypes();
+            if (p.length == 6 && p[1] == String.class && p[2] == String.class
+                    && p[3] == String.class && p[5] == int.class) {
+                forkCtor = ctor;
+                break;
+            }
+        }
+        if (forkCtor == null) throw new NoSuchMethodException("a60 fork constructor");
+        forkCtor.setAccessible(true);
+        Object task = forkCtor.newInstance(api, fileId, fromModel, toModel, null, 2);
+        Object result = runHostCoroutine(cl, api, task);
+        if (!"kp5".equals(simpleName(result))) {
+            log("fork_file_task rejected " + fromModel + "->" + toModel
+                    + " result=" + logValue(result));
+            return null;
+        }
+        Object fp = readHostField(result, "b");
+        if (!"fp".equals(simpleName(fp))) {
+            log("fork_file_task success wrapper had no fp: " + logValue(result));
+            return null;
+        }
+        return fp;
+    }
+
+    private static Object waitForUploadedImageReady(ClassLoader cl, Object api, Object initial)
+            throws Throwable {
+        Object current = initial;
+        int transientErrors = 0;
+        long deadline = System.currentTimeMillis() + 50000L;
+        for (int attempt = 0; attempt < 60 && System.currentTimeMillis() < deadline; attempt++) {
+            String status = hostEnumName(readHostField(current, "b"));
+            Object signed = readHostField(current, "j");
+            Object audit = readHostField(current, "l");
+            if ("SUCCESS".equals(status) && signed instanceof String
+                    && ((String) signed).trim().length() > 0
+                    && "pass".equals(String.valueOf(audit))) {
+                return current;
+            }
+            if (!"PENDING".equals(status) && !"PARSING".equals(status)
+                    && !"SUCCESS".equals(status)) {
+                log("fetch_files stopped at status=" + status
+                        + " file=" + readHostField(current, "a"));
+                return null;
+            }
+            String id = String.valueOf(readHostField(current, "a"));
+            if (id.length() == 0 || "null".equals(id)) return null;
+            Thread.sleep(attempt == 0 ? 1000L : 700L);
+            Object updated = fetchUploadedImageOnce(cl, api, id);
+            if (updated == null) {
+                if (++transientErrors >= 30) return null;
+                continue;
+            }
+            transientErrors = 0;
+            current = updated;
+        }
+        log("fetch_files timed out file=" + readHostField(current, "a")
+                + " status=" + hostEnumName(readHostField(current, "b")));
+        return null;
+    }
+
+    private static Object fetchUploadedImageOnce(ClassLoader cl, Object api, String fileId)
+            throws Throwable {
+        Constructor<?> fetchCtor = null;
+        for (Constructor<?> ctor : cl.loadClass("u40").getDeclaredConstructors()) {
+            Class<?>[] p = ctor.getParameterTypes();
+            if (p.length == 4 && p[0] == Object.class && p[1] == Object.class
+                    && p[3] == int.class) {
+                fetchCtor = ctor;
+                break;
+            }
+        }
+        if (fetchCtor == null) throw new NoSuchMethodException("u40 fetch constructor");
+        fetchCtor.setAccessible(true);
+        Object task = fetchCtor.newInstance(api, Collections.singleton(fileId), null, 1);
+        Object result = runHostCoroutine(cl, api, task);
+        if (!"kp5".equals(simpleName(result))) {
+            log("fetch_files rejected file=" + fileId + " result=" + deepDump(result, 4));
+            return null;
+        }
+        Object wrapper = readHostField(result, "b");
+        Object files = readHostField(wrapper, "a");
+        if (!(files instanceof List)) return null;
+        for (Object fp : (List) files) {
+            if (fileId.equals(String.valueOf(readHostField(fp, "a")))) return fp;
+        }
+        log("fetch_files omitted file=" + fileId);
+        return null;
+    }
+
+    private static Object runHostCoroutine(ClassLoader cl, Object api, Object task)
+            throws Throwable {
+        Object context = readHostField(api, "a");
+        if (context == null) throw new IllegalStateException("pv0 dispatcher missing");
+        Method runBlocking = null;
+        for (Method method : cl.loadClass("u82").getDeclaredMethods()) {
+            if ("K".equals(method.getName()) && method.getParameterTypes().length == 2
+                    && java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                runBlocking = method;
+                break;
+            }
+        }
+        if (runBlocking == null) throw new NoSuchMethodException("u82.K");
+        runBlocking.setAccessible(true);
+        return runBlocking.invoke(null, context, task);
+    }
+
+    private static String hostEnumName(Object value) {
+        if (value instanceof Enum) return ((Enum) value).name();
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private static JSONObject hostFileToJson(Object fp) throws Throwable {
+        JSONObject out = new JSONObject();
+        Object status = readHostField(fp, "b");
+        if (status instanceof Enum) status = ((Enum) status).name();
+        else if (status != null) status = String.valueOf(status);
+        putJson(out, "id", readHostField(fp, "a"));
+        putJson(out, "status", status);
+        putJson(out, "file_name", readHostField(fp, "c"));
+        putJson(out, "file_size", readHostField(fp, "d"));
+        putJson(out, "inserted_at", readHostField(fp, "e"));
+        putJson(out, "updated_at", readHostField(fp, "f"));
+        putJson(out, "token_usage", readHostField(fp, "g"));
+        putJson(out, "previewable", readHostField(fp, "h"));
+        putJson(out, "from_share", readHostField(fp, "i"));
+        putJson(out, "signed_path", readHostField(fp, "j"));
+        putJson(out, "is_image", readHostField(fp, "k"));
+        putJson(out, "audit_result", readHostField(fp, "l"));
+        putJson(out, "width", readHostField(fp, "m"));
+        putJson(out, "height", readHostField(fp, "n"));
+        putJson(out, "retryable", readHostField(fp, "o"));
+        Object signedPath = out.opt("signed_path");
+        if (!"SUCCESS".equals(out.optString("status", ""))
+                || out.optString("id", "").length() == 0
+                || !(signedPath instanceof String)
+                || ((String) signedPath).trim().length() == 0) {
+            throw new IllegalStateException("fresh fp missing id/signed_path");
+        }
+        return out;
+    }
+
+    private static void putJson(JSONObject object, String key, Object value) throws Throwable {
+        object.put(key, value == null ? JSONObject.NULL : value);
+    }
+
+    private static HashSet<String> localOnlySessionIds(ClassLoader cl) {
+        long now = System.currentTimeMillis();
+        HashSet<String> cached = LOCAL_SESSION_IDS;
+        if (now - LOCAL_SESSION_IDS_AT < 1200L) return new HashSet<>(cached);
+        HashSet<String> found = new HashSet<>();
+        try {
+            File file = ChatEditorUi.currentDb(cl);
+            found = ChatEditorUi.localSessionIdsFromBackups(file);
+        } catch (Throwable t) {
+            log("read local-only sidecars failed: " + t);
+        }
+        LOCAL_SESSION_IDS = found;
+        LOCAL_SESSION_IDS_AT = now;
+        return new HashSet<>(found);
+    }
+
+    /** Makes a freshly committed editor conversation visible to runtime guards immediately. */
+    static synchronized void registerEditorLocalSession(String sid, Integer currentHead) {
+        if (sid == null || sid.length() == 0) return;
+        RECENTLY_DELETED_SESSION_IDS.remove(sid);
+        HashSet<String> next = ChatEditorUi.localSessionIdsFromAllBackups();
+        next.addAll(LOCAL_SESSION_IDS);
+        next.add(sid);
+        LOCAL_SESSION_IDS = next;
+        LOCAL_SESSION_IDS_AT = System.currentTimeMillis();
+        if (currentHead != null && currentHead.intValue() > 0) {
+            FROZEN_SESSION_HEADS.put(sid, currentHead);
+        }
+    }
+
+    static synchronized void unregisterEditorLocalSession(String sid) {
+        if (sid == null || sid.length() == 0) return;
+        HashSet<String> next = ChatEditorUi.localSessionIdsFromAllBackups();
+        next.addAll(LOCAL_SESSION_IDS);
+        next.remove(sid);
+        LOCAL_SESSION_IDS = next;
+        LOCAL_SESSION_IDS_AT = System.currentTimeMillis();
+        FROZEN_SESSION_HEADS.remove(sid);
+        synchronized (LOCAL_NATIVE_SESSIONS) {
+            LOCAL_NATIVE_SESSIONS.remove(sid);
+        }
+    }
+
+    /**
+     * DeepSeek's p68 cloud-directory transaction asks aw.a() for every local session, then drops
+     * tables whose ids are absent from the server response. Hide only editor-owned sidecar ids from
+     * that one comparison. Incoming server rows and ordinary server-side deletions stay untouched.
+     */
+    private void hookLocalSessionDirectoryMerge(final ClassLoader cl) {
+        try {
+            Class<?> transaction = cl.loadClass("p68");
+            Class<?> directoryDao = cl.loadClass("aw");
+            int transactionHooks = 0;
+            int directoryHooks = 0;
+            for (Method method : transaction.getDeclaredMethods()) {
+                if (!"a".equals(method.getName()) || method.getParameterTypes().length != 0
+                        || method.getReturnType() != void.class) continue;
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        int preservedHeads = preserveFrozenDirectoryHeads(chain.getThisObject());
+                        if (preservedHeads > 0) {
+                            long now = System.currentTimeMillis();
+                            if (now - LOCAL_DIRECTORY_HEAD_LOG_AT > 5000L) {
+                                LOCAL_DIRECTORY_HEAD_LOG_AT = now;
+                                log("preserved frozen conversation heads during cloud sync="
+                                        + preservedHeads);
+                            }
+                        }
+                        Boolean previous = LOCAL_DIRECTORY_SYNC.get();
+                        LOCAL_DIRECTORY_SYNC.set(Boolean.TRUE);
+                        try {
+                            return chain.proceed();
+                        } finally {
+                            if (previous == null) LOCAL_DIRECTORY_SYNC.remove();
+                            else LOCAL_DIRECTORY_SYNC.set(previous);
+                        }
+                    }
+                });
+                transactionHooks++;
+            }
+            for (Method method : directoryDao.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if (!"a".equals(method.getName())
+                        || !java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                        || types.length != 1 || types[0] != directoryDao
+                        || !List.class.isAssignableFrom(method.getReturnType())) continue;
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object result = chain.proceed();
+                        if (!Boolean.TRUE.equals(LOCAL_DIRECTORY_SYNC.get())
+                                || !(result instanceof List)) return result;
+                        HashSet<String> localIds = ChatEditorUi.localSessionIdsFromAllBackups();
+                        if (localIds.isEmpty()) return result;
+                        List rows = (List) result;
+                        int removed = 0;
+                        for (int i = rows.size() - 1; i >= 0; i--) {
+                            Object row = rows.get(i);
+                            Object value = readHostField(row, "a");
+                            String sid = value == null ? null : String.valueOf(value);
+                            if (sid != null && localIds.contains(sid)) {
+                                rows.remove(i);
+                                removed++;
+                            }
+                        }
+                        if (removed > 0) {
+                            long now = System.currentTimeMillis();
+                            if (now - LOCAL_DIRECTORY_MERGE_LOG_AT > 5000L) {
+                                LOCAL_DIRECTORY_MERGE_LOG_AT = now;
+                                log("excluded editor-local sessions from cloud prune=" + removed);
+                            }
+                        }
+                        return result;
+                    }
+                });
+                directoryHooks++;
+            }
+            log("installed local cloud-directory merge p68=" + transactionHooks
+                    + " aw=" + directoryHooks);
+        } catch (Throwable t) {
+            log("hookLocalSessionDirectoryMerge failed: " + t);
+        }
+    }
+
+    /**
+     * The delayed server refresh is applied in ed0.h.  That method mutates ed0.e, the canonical
+     * SnapshotStateList observed by navigation, before p68 updates the WCDB directory.  Keeping a
+     * local tp only in mc.f's render argument therefore leaves the active-chat validator looking
+     * at a server-only list and the editor-created conversation disappears a few seconds after a
+     * cold start.  Capture editor-owned tp objects before every coroutine leg and put only those
+     * missing objects back into the same state list after the leg completes.  Server additions,
+     * metadata updates, ordering, and ordinary server-side deletions remain host-owned.
+     */
+    private void hookLocalNativeSessionRefresh(final ClassLoader cl) {
+        try {
+            Class<?> repository = cl.loadClass("ed0");
+            Class<?> continuation = cl.loadClass("uz1");
+            int installed = 0;
+            for (Method method : repository.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if (!"h".equals(method.getName()) || types.length != 1
+                        || types[0] != continuation) continue;
+                try { deoptimize(method); } catch (Throwable ignored) {}
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object before = readHostField(chain.getThisObject(), "e");
+                        HashSet<String> localIds = localOnlySessionIds(cl);
+                        if (before instanceof List && "uo7".equals(before.getClass().getName())) {
+                            preserveEditorLocalNativeSessions((List) before, localIds);
+                        }
+                        try {
+                            return chain.proceed();
+                        } finally {
+                            Object after = readHostField(chain.getThisObject(), "e");
+                            if (after instanceof List && "uo7".equals(after.getClass().getName())) {
+                                int restored = preserveEditorLocalNativeSessions(
+                                        (List) after, localIds);
+                                if (restored > 0) {
+                                    long now = System.currentTimeMillis();
+                                    if (now - LOCAL_NATIVE_STATE_REPAIR_LOG_AT > 1000L) {
+                                        LOCAL_NATIVE_STATE_REPAIR_LOG_AT = now;
+                                        log("restored editor-local sessions into native state="
+                                                + restored + " host sessions="
+                                                + ((List) after).size());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                installed++;
+            }
+            log("installed editor-local native-state refresh guard ed0.h x" + installed);
+        } catch (Throwable t) {
+            log("hookLocalNativeSessionRefresh failed: " + t);
+        }
+    }
+
+    /** Package-visible for the JVM regression: merge into the canonical host list, not a copy. */
+    static int preserveEditorLocalNativeSessions(List state, HashSet<String> localIds) {
+        if (state == null || localIds == null || localIds.isEmpty()) return 0;
+        HashSet<String> seen = new HashSet<>();
+        ArrayList<Object> missing = new ArrayList<>();
+        synchronized (LOCAL_NATIVE_SESSIONS) {
+            LOCAL_NATIVE_SESSIONS.keySet().retainAll(localIds);
+            try {
+                for (Object session : new ArrayList<Object>(state)) {
+                    Object value = readHostField(session, "a");
+                    String sid = value == null ? null : String.valueOf(value);
+                    if (sid == null || sid.length() == 0 || "null".equals(sid)) continue;
+                    seen.add(sid);
+                    if (localIds.contains(sid) && !isSessionRecentlyDeleted(sid)) {
+                        LOCAL_NATIVE_SESSIONS.put(sid, session);
+                    }
+                }
+                for (String sid : localIds) {
+                    if (seen.contains(sid) || isSessionRecentlyDeleted(sid)) continue;
+                    Object session = LOCAL_NATIVE_SESSIONS.get(sid);
+                    if (session != null) missing.add(session);
+                }
+            } catch (Throwable t) {
+                log("capture editor-local native state failed: " + t);
+                return 0;
+            }
+        }
+        int restored = 0;
+        for (Object session : missing) {
+            String sid = String.valueOf(readHostField(session, "a"));
+            if (isSessionRecentlyDeleted(sid)) continue;
+            boolean alreadyPresent = false;
+            try {
+                for (Object current : new ArrayList<Object>(state)) {
+                    if (sid.equals(String.valueOf(readHostField(current, "a")))) {
+                        alreadyPresent = true;
+                        break;
+                    }
+                }
+                if (!alreadyPresent && state.add(session)) restored++;
+            } catch (Throwable t) {
+                log("restore editor-local native session failed sid=" + sid + ": " + t);
+            }
+        }
+        if (restored > 0) {
+            try {
+                Collections.sort(state, new Comparator<Object>() {
+                    @Override public int compare(Object left, Object right) {
+                        boolean leftPinned = Boolean.TRUE.equals(invokeNoArg(left, "h"));
+                        boolean rightPinned = Boolean.TRUE.equals(invokeNoArg(right, "h"));
+                        if (leftPinned != rightPinned) return leftPinned ? -1 : 1;
+                        Object leftUpdated = readHostField(left, "c");
+                        Object rightUpdated = readHostField(right, "c");
+                        double l = leftUpdated instanceof Number
+                                ? ((Number) leftUpdated).doubleValue() : 0d;
+                        double r = rightUpdated instanceof Number
+                                ? ((Number) rightUpdated).doubleValue() : 0d;
+                        return l == r ? 0 : (l > r ? -1 : 1);
+                    }
+                });
+            } catch (Throwable t) {
+                log("sort restored editor-local native sessions failed: " + t);
+            }
+        }
+        NATIVE_SESSION_STATE = state;
+        NATIVE_SESSION_LIST = state;
+        return restored;
+    }
+
+    /**
+     * p68 deliberately keeps cache_version but overwrites current_message_id from the lightweight
+     * server directory.  Some directory entries omit that field.  Copy the valid local head into
+     * only those null incoming entries before WCDB applies the normal title/count merge.
+     */
+    private static int preserveFrozenDirectoryHeads(Object transaction) {
+        try {
+            Object incomingValue = readHostField(transaction, "a");
+            Object repository = readHostField(transaction, "b");
+            Object directory = readHostField(repository, "d");
+            if (!(incomingValue instanceof List) || directory == null) return 0;
+
+            Method reader = null;
+            for (Method method : directory.getClass().getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if ("a".equals(method.getName())
+                        && java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                        && types.length == 1 && types[0] == directory.getClass()
+                        && List.class.isAssignableFrom(method.getReturnType())) {
+                    reader = method;
+                    break;
+                }
+            }
+            if (reader == null) return 0;
+            reader.setAccessible(true);
+            Object localValue = reader.invoke(null, directory);
+            if (!(localValue instanceof List)) return 0;
+
+            HashMap<String, Object> frozenHeads = new HashMap<>();
+            for (Object local : (List) localValue) {
+                Object version = readHostField(local, "d");
+                Object head = readHostField(local, "h");
+                Object id = readHostField(local, "a");
+                if (version instanceof Number
+                        && ((Number) version).intValue() == Integer.MAX_VALUE
+                        && head != null && id != null) {
+                    String sid = String.valueOf(id);
+                    frozenHeads.put(sid, head);
+                    if (head instanceof Number) {
+                        FROZEN_SESSION_HEADS.put(sid, ((Number) head).intValue());
+                    }
+                }
+            }
+            if (frozenHeads.isEmpty()) return 0;
+
+            int preserved = 0;
+            for (Object incoming : (List) incomingValue) {
+                Object id = readHostField(incoming, "a");
+                if (id == null || readHostField(incoming, "h") != null) continue;
+                Object head = frozenHeads.get(String.valueOf(id));
+                if (head == null) continue;
+                if (forceSetObjectField(incoming, "h", head)) preserved++;
+            }
+            return preserved;
+        } catch (Throwable t) {
+            log("preserve frozen conversation heads failed: " + t);
+            return 0;
+        }
+    }
+
+    /** Local-only editor conversations have no detail endpoint; their za1 constructor already
+     * loads the WCDB table.  Suppress the redundant fa1 remote reload that otherwise reports the
+     * session as deleted and replaces the successfully loaded local state with an empty chat. */
+    private void hookLocalSessionRemoteReload(final ClassLoader cl) {
+        try {
+            Class<?> viewModel = cl.loadClass("za1");
+            Class<?> action = cl.loadClass("na1");
+            int installed = 0;
+            for (Method method : viewModel.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if (!"E".equals(method.getName()) || types.length != 1 || types[0] != action
+                        || method.getReturnType() != void.class) continue;
+                try { deoptimize(method); } catch (Throwable ignored) {}
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        try {
+                            Object event = chain.getArg(0);
+                            if (event != null && "fa1".equals(event.getClass().getName())) {
+                                Object session = invokeNoArg(chain.getThisObject(), "G");
+                                Object id = readHostField(session, "a");
+                                String sid = id == null ? null : String.valueOf(id);
+                                if (sid != null && FROZEN_SESSION_HEADS.containsKey(sid)) {
+                                    boolean localOnly = ChatEditorUi
+                                            .localSessionIdsFromAllBackups().contains(sid);
+                                    if (localOnly || isFrozenNativeSessionHydrated(session)) {
+                                        log("skipped remote detail reload for editor-frozen sid="
+                                                + sid + " hydrated="
+                                                + isFrozenNativeSessionHydrated(session));
+                                        return null;
+                                    }
+                                }
+                            }
+                        } catch (Throwable t) {
+                            log("inspect editor-local remote reload failed: " + t);
+                        }
+                        return chain.proceed();
+                    }
+                });
+                installed++;
+            }
+            log("installed editor-local remote reload guard za1.E x" + installed);
+        } catch (Throwable t) {
+            log("hookLocalSessionRemoteReload failed: " + t);
+        }
+    }
+
+    /**
+     * A conversation created by the editor intentionally has no cloud counterpart. DeepSeek still
+     * performs its normal detail request when that row is opened; biz code 1 is handled by at0.a()
+     * as a server-side deletion, which shows a toast and removes the otherwise valid local tp.
+     * Suppress only that exact result for ids owned by our sidecars. All cloud conversations and
+     * every other error continue through the host unchanged.
+     */
+    private void hookLocalSessionDeletedResponse(final ClassLoader cl) {
+        try {
+            Class<?> handler = cl.loadClass("at0");
+            Class<?> resultType = cl.loadClass("op5");
+            Class<?> ownerType = cl.loadClass("yg3");
+            int installed = 0;
+            for (Method method : handler.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if (!"a".equals(method.getName()) || types.length != 3
+                        || types[0] != resultType || types[1] != boolean.class
+                        || types[2] != ownerType || method.getReturnType() != void.class) continue;
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        try {
+                            Object[] args = chain.getArgs().toArray();
+                            Object status = readHostField(args[0], "a");
+                            Object code = readHostField(status, "a");
+                            if (code instanceof Number && ((Number) code).intValue() == 1) {
+                            Object viewModel = readHostField(args[2], "b");
+                            Object session = invokeNoArg(viewModel, "G");
+                            Object id = readHostField(session, "a");
+                            String sid = id == null ? null : String.valueOf(id);
+                            HashSet<String> localIds = ChatEditorUi.localSessionIdsFromAllBackups();
+                            String pending = PENDING_LOCAL_OPEN_SID;
+                            boolean pendingFresh = pending != null
+                                    && System.currentTimeMillis() - PENDING_LOCAL_OPEN_AT < 30000L
+                                    && localIds.contains(pending);
+                            boolean directLocal = sid != null && localIds.contains(sid);
+                            log("observed server-deleted result currentSid=" + sid
+                                    + " pendingLocal=" + pending + " localIds=" + localIds.size()
+                                    + " direct=" + directLocal + " pendingFresh=" + pendingFresh);
+                            if (directLocal || ((sid == null || sid.length() == 0
+                                    || "null".equals(sid)) && pendingFresh)) {
+                                log("suppressed server-deleted result for editor-local sid="
+                                        + (directLocal ? sid : pending));
+                                return null;
+                            }
+                            }
+                        } catch (Throwable t) {
+                            log("inspect local session deleted result failed: " + t);
+                        }
+                        return chain.proceed();
+                    }
+                });
+                installed++;
+            }
+            log("installed editor-local deleted-response guard at0.a x" + installed);
+        } catch (Throwable t) {
+            log("hookLocalSessionDeletedResponse failed: " + t);
+        }
+    }
+
+    /**
+     * Real UI traffic reaches the deletion branch through za1.N(). ART may inline the tiny at0.a
+     * helper into that caller, so hooking at0 alone is insufficient even though reflective probes
+     * hit it. Stop the exact code-1 event at the ViewModel boundary before it can show the toast or
+     * replace the selected conversation with a new empty session.
+     */
+    private void hookLocalSessionDeletedFlow(final ClassLoader cl) {
+        try {
+            Class<?> viewModelType = cl.loadClass("za1");
+            Class<?> eventType = cl.loadClass("bu0");
+            Class<?> optionType = cl.loadClass("zs0");
+            Class<?> envelopeType = cl.loadClass("au0");
+            Class<?> errorType = cl.loadClass("op5");
+            int installed = 0;
+            for (Method method : viewModelType.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if (!"N".equals(method.getName()) || types.length != 2
+                        || types[0] != eventType || types[1] != optionType
+                        || method.getReturnType() != void.class) continue;
+                try { log("deopt za1.N ok=" + deoptimize(method)); }
+                catch (Throwable t) { log("deopt za1.N failed: " + t); }
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        try {
+                            Object event = chain.getArg(0);
+                            if (envelopeType.isInstance(event)) {
+                                Object error = readHostField(event, "a");
+                                if (errorType.isInstance(error)) {
+                                    Object status = readHostField(error, "a");
+                                    Object code = readHostField(status, "a");
+                                    if (code instanceof Number
+                                            && ((Number) code).intValue() == 1) {
+                                        Object session = invokeNoArg(
+                                                chain.getThisObject(), "G");
+                                        Object id = readHostField(session, "a");
+                                        String sid = id == null ? null : String.valueOf(id);
+                                        HashSet<String> localIds =
+                                                ChatEditorUi.localSessionIdsFromAllBackups();
+                                        String pending = PENDING_LOCAL_OPEN_SID;
+                                        boolean pendingFresh = pending != null
+                                                && System.currentTimeMillis()
+                                                - PENDING_LOCAL_OPEN_AT < 30000L
+                                                && localIds.contains(pending);
+                                        boolean directLocal = sid != null
+                                                && localIds.contains(sid);
+                                        log("observed ViewModel deleted event currentSid=" + sid
+                                                + " pendingLocal=" + pending
+                                                + " direct=" + directLocal
+                                                + " pendingFresh=" + pendingFresh);
+                                        if (directLocal || pendingFresh) {
+                                            log("suppressed ViewModel deleted event for "
+                                                    + "editor-local sid="
+                                                    + (directLocal ? sid : pending));
+                                            return null;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (Throwable t) {
+                            log("inspect ViewModel deleted event failed: " + t);
+                        }
+                        return chain.proceed();
+                    }
+                });
+                installed++;
+            }
+            log("installed editor-local ViewModel deletion guard za1.N x" + installed);
+        } catch (Throwable t) {
+            log("hookLocalSessionDeletedFlow failed: " + t);
+        }
+    }
+
+    /** Removes the gateway's reusable server sessions before DeepSeek persists/renders its page. */
+    private void hookLocalApiSessionVisibility(final ClassLoader cl) {
+        try {
+            Class<?> pageType = cl.loadClass("sb1");
+            int installed = 0;
+            for (Constructor<?> ctor : pageType.getDeclaredConstructors()) {
+                Class<?>[] types = ctor.getParameterTypes();
+                if (types.length != 3 || types[0] != int.class
+                        || !List.class.isAssignableFrom(types[1])
+                        || types[2] != boolean.class) continue;
+                hook(ctor).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object raw = chain.getArg(1);
+                        if (!(raw instanceof List)) return chain.proceed();
+                        List source = (List) raw;
+                        ArrayList filtered = null;
+                        for (int i = 0; i < source.size(); i++) {
+                            Object session = source.get(i);
+                            String sid = String.valueOf(readHostField(session, "a"));
+                            if (isLocalApiInternalSession(sid)) {
+                                if (filtered == null) filtered = new ArrayList(source);
+                                filtered.remove(session);
+                            }
+                        }
+                        if (filtered == null) return chain.proceed();
+                        Object[] args = chain.getArgs().toArray();
+                        args[1] = filtered;
+                        log("[LOCAL_API] hidden reusable session(s) from cloud page="
+                                + (source.size() - filtered.size()));
+                        return chain.proceed(args);
+                    }
+                });
+                installed++;
+            }
+            log("installed local API session visibility filter sb1 x" + installed);
+        } catch (Throwable t) {
+            log("hookLocalApiSessionVisibility failed: " + t);
+        }
+    }
+
     private void hookNativeSessionNavigator(final ClassLoader cl) {
         try {
             Class<?> mc = cl.loadClass("mc");
@@ -2074,17 +4012,79 @@ public class Main extends XposedModule {
             for (Method method : mc.getDeclaredMethods()) {
                 Class<?>[] types = method.getParameterTypes();
                 if (!"f".equals(method.getName()) || types.length != 13) continue;
-                if (!List.class.isAssignableFrom(types[0]) || !ib3.isAssignableFrom(types[4])) continue;
+                if (!List.class.isAssignableFrom(types[0])
+                        || !ib3.isAssignableFrom(types[4])
+                        || !ib3.isAssignableFrom(types[5])) continue;
                 hook(method).intercept(new Hooker() {
                     @Override public Object intercept(Chain chain) throws Throwable {
+                        Object[] replacement = null;
                         try {
                             Object[] args = chain.getArgs().toArray();
                             if (args[0] instanceof List && args[4] != null) {
+                                hookNativeSessionClickCallback(args[4], cl);
+                                List source = (List) args[0];
+                                ArrayList visible = null;
+                                for (Object session : new ArrayList(source)) {
+                                    String id = String.valueOf(readHostField(session, "a"));
+                                    if (isLocalApiInternalSession(id)) {
+                                        if (visible == null) visible = new ArrayList(source);
+                                        visible.remove(session);
+                                    }
+                                }
+                                if (visible != null) {
+                                    source = visible;
+                                    args[0] = source;
+                                    replacement = args;
+                                }
+                                int serverSize = source.size();
+                                HashSet<String> localIds = localOnlySessionIds(cl);
+                                HashSet<String> seen = new HashSet<>();
+                                List merged = source;
+                                try {
+                                    Constructor<?> ctor = source.getClass().getDeclaredConstructor();
+                                    ctor.setAccessible(true);
+                                    Object sameType = ctor.newInstance();
+                                    if (sameType instanceof List) {
+                                        merged = (List) sameType;
+                                        merged.addAll(source);
+                                    }
+                                } catch (Throwable ignored) {}
+                                synchronized (LOCAL_NATIVE_SESSIONS) {
+                                    LOCAL_NATIVE_SESSIONS.keySet().retainAll(localIds);
+                                    for (Object session : new ArrayList(source)) {
+                                        String sid = String.valueOf(readHostField(session, "a"));
+                                        if (sid == null || sid.length() == 0 || "null".equals(sid)) continue;
+                                        seen.add(sid);
+                                        if (localIds.contains(sid)) {
+                                            LOCAL_NATIVE_SESSIONS.put(sid, session);
+                                        }
+                                    }
+                                    for (String sid : localIds) {
+                                        if (seen.contains(sid)) continue;
+                                        Object localSession = LOCAL_NATIVE_SESSIONS.get(sid);
+                                        if (localSession != null) {
+                                            merged.add(localSession);
+                                            seen.add(sid);
+                                        }
+                                    }
+                                }
+                                if (merged.size() != serverSize) {
+                                    if (merged != source) args[0] = merged;
+                                    long now = System.currentTimeMillis();
+                                    if (now - LOCAL_NATIVE_MERGE_LOG_AT > 5000L) {
+                                        LOCAL_NATIVE_MERGE_LOG_AT = now;
+                                        log("preserved local native sessions="
+                                                + (merged.size() - serverSize)
+                                                + " server sessions=" + serverSize);
+                                    }
+                                }
                                 NATIVE_SESSION_LIST = args[0];
                                 NATIVE_SESSION_CLICK = args[4];
+                                NATIVE_SESSION_EVENTS = args[5];
+                                if (args[0] != source) replacement = args;
                             }
                         } catch (Throwable t) { log("capture native session navigator failed: " + t); }
-                        return chain.proceed();
+                        return replacement == null ? chain.proceed() : chain.proceed(replacement);
                     }
                 });
                 installed++;
@@ -2093,8 +4093,297 @@ public class Main extends XposedModule {
         } catch (Throwable t) { log("hookNativeSessionNavigator failed: " + t); }
     }
 
+    private void hookNativeSessionClickCallback(Object callback, final ClassLoader cl) {
+        if (callback == null) return;
+        Class<?> callbackClass = callback.getClass();
+        synchronized (NATIVE_CLICK_HOOKED_CLASSES) {
+            if (!NATIVE_CLICK_HOOKED_CLASSES.add(callbackClass)) return;
+        }
+        int installed = 0;
+        try {
+            for (Class<?> type = callbackClass; type != null; type = type.getSuperclass()) {
+                for (Method method : type.getDeclaredMethods()) {
+                    if (!"g".equals(method.getName())
+                            || method.getParameterTypes().length != 1) continue;
+                    hook(method).intercept(new Hooker() {
+                        @Override public Object intercept(Chain chain) throws Throwable {
+                            if (chain.getThisObject() != NATIVE_SESSION_CLICK) {
+                                return chain.proceed();
+                            }
+                            Object session = chain.getArg(0);
+                            if (session == null
+                                    || !"tp".equals(session.getClass().getName())) {
+                                return chain.proceed();
+                            }
+                            try {
+                                Object id = readHostField(session, "a");
+                                String sid = id == null ? null : String.valueOf(id);
+                                if (sid != null && sid.length() > 0 && !"null".equals(sid)) {
+                                    if (FROZEN_SESSION_HEADS.containsKey(sid)) {
+                                        hydrateFrozenNativeSession(cl, session, sid);
+                                    }
+                                    HashSet<String> locals =
+                                            ChatEditorUi.localSessionIdsFromAllBackups();
+                                    Object messages = readHostField(session, "f");
+                                    Object transactions = readHostField(session, "q");
+                                    Object messageState = readHostField(session, "j");
+                                    Object stateValue = messageState == null ? null
+                                            : invokeNoArg(messageState, "getValue");
+                                    Object stateRows = readHostField(stateValue, "a");
+                                    log("native click state sid=" + sid
+                                            + " messages=" + (messages instanceof Map
+                                            ? ((Map) messages).size() : -1)
+                                            + " transactions=" + (transactions instanceof Map
+                                            ? ((Map) transactions).size() : -1)
+                                            + " head=" + invokeNoArg(session, "t")
+                                            + " n=" + readHostField(session, "n")
+                                            + " o=" + readHostField(session, "o")
+                                            + " state=" + (stateValue == null ? "null"
+                                            : stateValue.getClass().getName())
+                                            + " rows=" + (stateRows instanceof List
+                                            ? ((List) stateRows).size() : -1));
+                                    if (locals.contains(sid)) {
+                                        PENDING_LOCAL_OPEN_SID = sid;
+                                        PENDING_LOCAL_OPEN_AT = System.currentTimeMillis();
+                                        log("native click selected editor-local sid=" + sid);
+                                    } else {
+                                        PENDING_LOCAL_OPEN_SID = null;
+                                        PENDING_LOCAL_OPEN_AT = 0L;
+                                        log("native click selected server sid=" + sid);
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                log("inspect native session click failed: " + t);
+                            }
+                            return chain.proceed();
+                        }
+                    });
+                    installed++;
+                }
+            }
+            log("installed native session click callback hooks=" + installed
+                    + " class=" + callbackClass.getName());
+        } catch (Throwable t) {
+            log("hook native session click callback failed: " + t);
+        }
+    }
+
+    /**
+     * Reuses DeepSeek's own gm8 -> sl8 -> kv pipeline to materialise an editor-frozen WCDB table
+     * into the exact tp object selected by the sidebar.  This avoids both Android-SQLite/WCDB
+     * cross-engine reads and hand-built host message objects.
+     */
+    private static boolean hydrateFrozenNativeSession(ClassLoader cl, Object session, String sid) {
+        if (session == null || sid == null) return false;
+        try {
+            Object messages = readHostField(session, "f");
+            Object head = invokeNoArg(session, "t");
+            if (messages instanceof Map && ((Map) messages).size() > 1 && head != null) return true;
+            Object repository = liveFm8;
+            Integer localHead = FROZEN_SESSION_HEADS.get(sid);
+            if (repository == null || localHead == null) return false;
+
+            Class<?> continuation = cl.loadClass("uz1");
+            Class<?> unitType = cl.loadClass("ui8");
+            Field unitField = unitType.getDeclaredField("a");
+            unitField.setAccessible(true);
+            Object unit = unitField.get(null);
+
+            Class<?> loaderType = cl.loadClass("ve1");
+            Constructor<?> loaderCtor = loaderType.getDeclaredConstructor(
+                    cl.loadClass("gm8"), String.class, continuation, int.class);
+            loaderCtor.setAccessible(true);
+            Object loader = loaderCtor.newInstance(repository, sid, null, 0);
+            Method executeLoader = loaderType.getDeclaredMethod("y", Object.class);
+            executeLoader.setAccessible(true);
+            Object rows = executeLoader.invoke(loader, unit);
+            if (!(rows instanceof List) || ((List) rows).isEmpty()) {
+                log("frozen native hydration found no WCDB rows sid=" + sid);
+                return false;
+            }
+
+            Class<?> mapperType = cl.loadClass("ie");
+            Constructor<?> mapperCtor = null;
+            for (Constructor<?> ctor : mapperType.getDeclaredConstructors()) {
+                Class<?>[] types = ctor.getParameterTypes();
+                if (types.length == 5 && types[4] == int.class) {
+                    mapperCtor = ctor;
+                    break;
+                }
+            }
+            if (mapperCtor == null) throw new NoSuchMethodException("ie case-7 constructor");
+            mapperCtor.setAccessible(true);
+            Object mapper = mapperCtor.newInstance(session, rows, localHead, null, 7);
+            Method executeMapper = mapperType.getDeclaredMethod("y", Object.class);
+            executeMapper.setAccessible(true);
+            executeMapper.invoke(mapper, unit);
+
+            Object after = readHostField(session, "f");
+            Object afterHead = invokeNoArg(session, "t");
+            boolean hydrated = after instanceof Map && ((Map) after).size() > 1
+                    && afterHead != null;
+            log("frozen native hydration sid=" + sid + " rows=" + ((List) rows).size()
+                    + " messages=" + (after instanceof Map ? ((Map) after).size() : -1)
+                    + " head=" + afterHead + " ok=" + hydrated);
+            return hydrated;
+        } catch (Throwable t) {
+            Throwable cause = t instanceof java.lang.reflect.InvocationTargetException
+                    && ((java.lang.reflect.InvocationTargetException) t).getCause() != null
+                    ? ((java.lang.reflect.InvocationTargetException) t).getCause() : t;
+            log("frozen native hydration failed sid=" + sid + ": " + cause);
+            return false;
+        }
+    }
+
+    private static boolean isFrozenNativeSessionHydrated(Object session) {
+        Object messages = readHostField(session, "f");
+        return messages instanceof Map && ((Map) messages).size() > 1
+                && invokeNoArg(session, "t") != null;
+    }
+
+    private void hookHistoryLoadDiagnostics(final ClassLoader cl) {
+        try {
+            Class<?> rawLoader = cl.loadClass("ve1");
+            int rawHooks = 0;
+            for (Method method : rawLoader.getDeclaredMethods()) {
+                if (!"y".equals(method.getName())
+                        || method.getParameterTypes().length != 1) continue;
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object result = chain.proceed();
+                        try {
+                            Object kind = readHostField(chain.getThisObject(), "e");
+                            Object sid = readHostField(chain.getThisObject(), "g");
+                            if (kind instanceof Number && ((Number) kind).intValue() == 0) {
+                                log("WCDB raw message load sid=" + sid + " rows="
+                                        + (result instanceof List ? ((List) result).size() : -1)
+                                        + " result=" + (result == null ? "null"
+                                        : result.getClass().getName()));
+                            }
+                        } catch (Throwable t) {
+                            log("inspect WCDB raw load failed: " + t);
+                        }
+                        return result;
+                    }
+                });
+                rawHooks++;
+            }
+
+            Class<?> mapper = cl.loadClass("ie");
+            int mapperHooks = 0;
+            for (Method method : mapper.getDeclaredMethods()) {
+                if (!"y".equals(method.getName())
+                        || method.getParameterTypes().length != 1) continue;
+                hook(method).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object self = chain.getThisObject();
+                        Object kind = readHostField(self, "e");
+                        if (!(kind instanceof Number) || ((Number) kind).intValue() != 7) {
+                            return chain.proceed();
+                        }
+                        Object session = readHostField(self, "f");
+                        Object rows = readHostField(self, "g");
+                        Object messages = readHostField(session, "f");
+                        String sid = String.valueOf(readHostField(session, "a"));
+                        log("native message map begin sid=" + sid + " rows="
+                                + (rows instanceof List ? ((List) rows).size() : -1)
+                                + " cache=" + (messages instanceof Map
+                                ? ((Map) messages).size() : -1));
+                        try {
+                            Object result = chain.proceed();
+                            Object after = readHostField(session, "f");
+                            log("native message map end sid=" + sid + " cache="
+                                    + (after instanceof Map ? ((Map) after).size() : -1));
+                            return result;
+                        } catch (Throwable t) {
+                            log("native message map failed sid=" + sid + " error=" + t);
+                            throw t;
+                        }
+                    }
+                });
+                mapperHooks++;
+            }
+            log("installed history-load diagnostics ve1=" + rawHooks
+                    + " ie=" + mapperHooks);
+        } catch (Throwable t) {
+            log("hook history-load diagnostics failed: " + t);
+        }
+    }
+
+    private void scheduleRealSessionProbe() {
+        final File marker = new File(REAL_SESSION_PROBE_FILE);
+        if (!marker.isFile()) return;
+        final String raw = readSmallText(REAL_SESSION_PROBE_FILE);
+        final String sid = raw == null ? "" : raw.trim();
+        marker.delete();
+        if (!sid.matches("[0-9a-fA-F-]{36}")) {
+            log("real session probe invalid sid");
+            return;
+        }
+        Thread worker = new Thread(new Runnable() {
+            @Override public void run() {
+                for (int i = 0; i < 60; i++) {
+                    if (NATIVE_SESSION_LIST instanceof List && NATIVE_SESSION_CLICK != null) {
+                        try { Thread.sleep(4000L); }
+                        catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                        main.post(new Runnable() {
+                            @Override public void run() {
+                                log("real session probe navigation sid=" + sid
+                                        + " opened=" + openNativeSession(sid));
+                            }
+                        });
+                        return;
+                    }
+                    try { Thread.sleep(250L); }
+                    catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+                log("real session probe timed out sid=" + sid);
+            }
+        }, "Deekseep-real-session-probe");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    static void refreshNativeHistorySnapshots() {
+        try { HistoryBridge.processNativeSessions(NATIVE_SESSION_LIST); }
+        catch (Throwable t) { log("refresh native history snapshots failed: " + t); }
+    }
+
+    static void refreshNativeHistorySnapshot(String sid) {
+        try { HistoryBridge.processNativeSession(NATIVE_SESSION_LIST, sid); }
+        catch (Throwable t) { log("refresh native history snapshot failed: " + t); }
+    }
+
+    // 当前侧栏的 tp 目录可能比 SQLite 的 chat_session_list 更早拿到新会话。
+    // 编辑器每次打开时合并这份只读元数据，避免刚创建的对话暂时消失。
+    static List<Object[]> nativeSessionDirectory() {
+        ArrayList<Object[]> out = new ArrayList<>();
+        Object value = NATIVE_SESSION_LIST;
+        if (!(value instanceof List)) return out;
+        try {
+            for (Object session : new ArrayList<Object>((List) value)) {
+                String sid = String.valueOf(readHostField(session, "a"));
+                if (sid == null || sid.length() == 0 || "null".equals(sid)) continue;
+                if (isSessionRecentlyDeleted(sid)) continue;
+                Object titleState = readHostField(session, "g");
+                Object title = titleState == null ? null : invokeNoArg(titleState, "getValue");
+                Object updated = readHostField(session, "c");
+                Object model = invokeNoArg(session, "f");
+                out.add(new Object[]{sid, title instanceof String ? title : "", updated, model});
+            }
+        } catch (Throwable t) { log("native session directory failed: " + t); }
+        return out;
+    }
+
     static boolean openNativeSession(String sid) {
         if (sid == null || sid.length() == 0) return false;
+        if (isSessionRecentlyDeleted(sid)) return false;
         Object sessions = NATIVE_SESSION_LIST;
         Object click = NATIVE_SESSION_CLICK;
         if (!(sessions instanceof List) || click == null) {
@@ -2114,6 +4403,112 @@ public class Main extends XposedModule {
         } catch (Throwable t) {
             log("native session navigation failed: " + t);
         }
+        return false;
+    }
+
+    /**
+     * Sends DeepSeek's own h61(tp) deletion event.  This is the same path used by the original
+     * sidebar delete item and therefore keeps the authenticated server deletion, native list
+     * update, and WCDB cleanup behavior.  The per-row xa3 is retained only as a compatibility
+     * fallback for builds whose event class was renamed.
+     */
+    static boolean requestNativeSessionDelete(String sid) {
+        if (sid == null || sid.length() == 0) return false;
+        Object session = findNativeSession(sid);
+        Object events = NATIVE_SESSION_EVENTS;
+        if (session != null && events != null) {
+            try {
+                ClassLoader cl = session.getClass().getClassLoader();
+                Class<?> eventType = cl.loadClass("h61");
+                Constructor<?> eventCtor = null;
+                for (Constructor<?> ctor : eventType.getDeclaredConstructors()) {
+                    Class<?>[] types = ctor.getParameterTypes();
+                    if (types.length == 1 && types[0].isAssignableFrom(session.getClass())) {
+                        eventCtor = ctor;
+                        break;
+                    }
+                }
+                if (eventCtor == null) throw new NoSuchMethodException("h61(tp)");
+                eventCtor.setAccessible(true);
+                Object event = eventCtor.newInstance(session);
+                if (invokeHostOneArg(events, event)) {
+                    markSessionDeletedLocally(sid);
+                    log("requested native DeepSeek session delete sid=" + sid);
+                    return true;
+                }
+            } catch (Throwable t) {
+                log("native DeepSeek delete event failed sid=" + sid + ": " + t);
+            }
+        }
+
+        Object action;
+        synchronized (SIDEBAR_DELETE_ACTIONS) {
+            action = SIDEBAR_DELETE_ACTIONS.get(sid);
+        }
+        if (invokeXa3(action)) {
+            markSessionDeletedLocally(sid);
+            log("requested native sidebar delete fallback sid=" + sid);
+            return true;
+        }
+        log("native DeepSeek delete unavailable sid=" + sid);
+        return false;
+    }
+
+    private static Object findNativeSession(String sid) {
+        Object sessions = NATIVE_SESSION_LIST;
+        if (sessions instanceof List) {
+            try {
+                for (Object session : new ArrayList<Object>((List) sessions)) {
+                    if (sid.equals(String.valueOf(readHostField(session, "a")))) return session;
+                }
+            } catch (Throwable ignored) {}
+        }
+        synchronized (LOCAL_NATIVE_SESSIONS) {
+            return LOCAL_NATIVE_SESSIONS.get(sid);
+        }
+    }
+
+    /**
+     * Optimistically removes an explicitly deleted session from captured in-memory directories.
+     * The real host request still decides server state.  The short tombstone only prevents the
+     * editor from immediately re-merging a stale tp while that request is in flight.
+     */
+    static synchronized void markSessionDeletedLocally(String sid) {
+        if (sid == null || sid.length() == 0) return;
+        RECENTLY_DELETED_SESSION_IDS.put(sid, System.currentTimeMillis());
+        HashSet<String> localIds = new HashSet<>(LOCAL_SESSION_IDS);
+        localIds.remove(sid);
+        LOCAL_SESSION_IDS = localIds;
+        LOCAL_SESSION_IDS_AT = System.currentTimeMillis();
+        FROZEN_SESSION_HEADS.remove(sid);
+        HistoryBridge.forgetSession(sid);
+        ResponsePreserver.forgetSession(sid);
+        synchronized (LOCAL_NATIVE_SESSIONS) {
+            LOCAL_NATIVE_SESSIONS.remove(sid);
+        }
+        Object sessions = NATIVE_SESSION_LIST;
+        if (sessions instanceof List) {
+            try {
+                Object match = null;
+                for (Object session : new ArrayList<Object>((List) sessions)) {
+                    if (sid.equals(String.valueOf(readHostField(session, "a")))) {
+                        match = session;
+                        break;
+                    }
+                }
+                if (match != null) ((List) sessions).remove(match);
+            } catch (Throwable t) {
+                log("remove deleted native session failed sid=" + sid + ": " + t);
+            }
+        }
+    }
+
+    private static boolean isSessionRecentlyDeleted(String sid) {
+        Long at = RECENTLY_DELETED_SESSION_IDS.get(sid);
+        if (at == null) return false;
+        if (System.currentTimeMillis() - at.longValue()
+                <= DELETED_SESSION_VISIBILITY_GRACE_MS) return true;
+        RECENTLY_DELETED_SESSION_IDS.remove(sid, at);
         return false;
     }
 
@@ -2271,37 +4666,23 @@ public class Main extends XposedModule {
         }
     }
 
-    // ── 自我激活标记 ──────────────────────────────────────────────
-
-    private void markSelfActive(ClassLoader cl) {
-        try {
-            Class<?> a = cl.loadClass("com.dsmod.probe.SettingsActivity");
-            for (Method m : a.getDeclaredMethods()) {
-                if (m.getName().equals("isModuleActive")) {
-                    hook(m).intercept(new Hooker() {
-                        @Override public Object intercept(Chain chain) throws Throwable {
-                            return Boolean.TRUE;
-                        }
-                    });
-                }
-            }
-        } catch (Throwable ignored) {}
-        // 二次判据：在模块自身进程写一个新鲜的激活标记，SettingsActivity 读它兜底
-        try {
-            File mf = new File(SELF_ACTIVE_MARK);
-            File dir = mf.getParentFile();
-            if (dir != null && !dir.exists()) dir.mkdirs();
-            FileWriter w = new FileWriter(mf, false);
-            w.write(String.valueOf(System.currentTimeMillis()));
-            w.close();
-        } catch (Throwable ignored) {}
-    }
-
     // 首次注入 DeepSeek 时弹出免责声明：拒绝退出，同意后写标记不再弹
     private void maybeShowDisclaimer(final Activity act) {
         if (disclaimerHandled) return;
         try {
-            if (new File(DISCLAIMER_FILE).exists()) { disclaimerHandled = true; return; }
+            File marker = new File(DISCLAIMER_FILE);
+            if (marker.exists()) {
+                BufferedReader reader = null;
+                try {
+                    reader = new BufferedReader(new FileReader(marker));
+                    if (DISCLAIMER_VERSION.equals(reader.readLine())) {
+                        disclaimerHandled = true;
+                        return;
+                    }
+                } finally {
+                    if (reader != null) try { reader.close(); } catch (Throwable ignored) {}
+                }
+            }
         } catch (Throwable ignored) {}
         disclaimerHandled = true;
         if (act == null || act.isFinishing()) return;
@@ -2310,34 +4691,46 @@ public class Main extends XposedModule {
                 try {
                     String msg =
                         "本模块（Deekseep）通过 Xposed 框架修改 DeepSeek 的运行行为，使用前请知悉：\n\n"
-                        + "• 风险自担：因使用本模块产生的一切后果，均由你本人承担。\n"
-                        + "• 封号风险：修改客户端行为可能违反 DeepSeek 用户协议，账号存在被限制或封禁的风险。\n"
-                        + "• 数据风险：注入过程可能影响消息、历史记录等数据，请自行备份。\n"
-                        + "• 恶意用途：本模块仅供个人学习与研究，切勿用于任何违法或恶意行为。\n\n"
+                        + "• 账号与协议风险：修改客户端、系统提示词、专家模式和回复处理可能违反服务条款，"
+                        + "账号可能被限制；宿主升级或混淆变化也可能使功能失效。\n"
+                        + "• 聊天数据风险：编辑、创建、删除会话会直接修改本地数据库和宿主内存，云端同步可能"
+                        + "产生覆盖或冲突。操作前请备份，勿在关键数据上首次试用。\n"
+                        + "• 回复保留风险：模块只能尽力保留本机已观察到的原始回复，不能改变服务器规则，也不能"
+                        + "恢复启用前已经被替换的内容。\n"
+                        + "• 图片与专家中继：相册图片会复制到 DeepSeek 私有目录；专家模式图片可能先发送给视觉"
+                        + "服务生成描述，再把描述交给专家模型，不能保证识别准确或长期可用。\n"
+                        + "• 多账号凭证：账号槽保存完整登录凭证；导出的 TXT 是明文 JSON，获得文件的人可能直接"
+                        + "使用你的账号。导入时会把候选 token 发给 DeepSeek 官方接口验真。请勿分享并及时删除导出文件。\n"
+                        + "• 地区登录解锁：Google、微信和手机号功能只恢复宿主按地区隐藏的原生入口，凭证仍由"
+                        + "DeepSeek 原生流程提交给官方登录接口；模块不绕过服务器地区、账号或风控限制，也不保证登录成功。\n"
+                        + "• 本地 API：启用前会要求把 DeepSeek 电池策略设为不限制并允许后台活动；这会增加耗电。"
+                        + "服务在 DeepSeek 进程内监听本机与局域网地址，提供经 API Key 认证的 OpenAI 或 Anthropic 格式，并以当前登录账号创建或复用被界面隐藏的 API 专用会话；关闭服务时再清理。"
+                        + "API 密钥会按你的要求写入连接信息与日志；任何能读取密钥的本机程序都可消耗账号额度并提交内容。\n"
+                        + "• Agent 工具风险：本地 API 可把模型输出转换为 function、shell、apply_patch 等工具调用；"
+                        + "实际执行由 Codex/Agent 的工作区、沙箱和授权策略决定。错误工具参数可能修改文件或运行命令，请保留客户端确认和权限隔离。\n"
+                        + "• 文件与日志隐私：Markdown、数据库备份和账号导出会生成可被其他应用或文件管理器读取的"
+                        + "文件；开启服务器诊断日志可能记录聊天内容、返回事件和错误信息。\n"
+                        + "• 风险自担与合法使用：功能仅供本人学习、研究和数据管理，请勿用于未授权账号、违法或"
+                        + "恶意用途；因使用本模块产生的后果由使用者承担。\n\n"
                         + "点击“同意”表示你已阅读并接受上述风险；点击“拒绝”将退出 DeepSeek。";
-                    new android.app.AlertDialog.Builder(act)
-                        .setTitle("Deekseep 免责声明")
-                        .setMessage(msg)
-                        .setCancelable(false)
-                        .setPositiveButton("同意", new android.content.DialogInterface.OnClickListener() {
-                            @Override public void onClick(android.content.DialogInterface d, int which) {
-                                try {
-                                    FileWriter w = new FileWriter(DISCLAIMER_FILE, false);
-                                    w.write(String.valueOf(System.currentTimeMillis()));
-                                    w.close();
-                                } catch (Throwable ignored) {}
-                                d.dismiss();
-                            }
-                        })
-                        .setNegativeButton("拒绝", new android.content.DialogInterface.OnClickListener() {
-                            @Override public void onClick(android.content.DialogInterface d, int which) {
-                                try { d.dismiss(); } catch (Throwable ignored) {}
+                    DeekseepUi.showCustomConfirm(act, "Deekseep 免责声明", msg,
+                        "拒绝", "同意", false,
+                        new Runnable() {
+                            @Override public void run() {
                                 try { act.finishAffinity(); } catch (Throwable ignored) {}
                                 android.os.Process.killProcess(android.os.Process.myPid());
                                 System.exit(0);
                             }
-                        })
-                        .show();
+                        },
+                        new Runnable() {
+                            @Override public void run() {
+                                try {
+                                    FileWriter w = new FileWriter(DISCLAIMER_FILE, false);
+                                    w.write(DISCLAIMER_VERSION);
+                                    w.close();
+                                } catch (Throwable ignored) {}
+                            }
+                        });
                 } catch (Throwable t) { log("disclaimer show err: " + t); }
             }
         });
@@ -2429,11 +4822,14 @@ public class Main extends XposedModule {
                 Object[] args = chain.getArgs().toArray();
                 try { if (liveR92 == null) liveR92 = chain.getThisObject(); } catch (Throwable ignored) {}
                 try {
+                    Object req = args != null && args.length > 0 ? args[0] : null;
                     List fps = tlPendingFps.get();
-                    if (fps != null) {
-                        tlPendingFps.remove();
-                        Object req = args != null && args.length > 0 ? args[0] : null;
-                        if (req != null) ew0Fps.put(req, fps);
+                    String effectiveModel = tlPendingModel.get();
+                    tlPendingFps.remove();
+                    tlPendingModel.remove();
+                    if (req != null) {
+                        if (fps != null) ew0Fps.put(req, fps);
+                        if (effectiveModel != null) ew0EffectiveModels.put(req, effectiveModel);
                     }
                 } catch (Throwable ignored) {}
                 Object r = chain.proceed();
@@ -2494,45 +4890,63 @@ public class Main extends XposedModule {
         return out;
     }
 
-    // 2) 专家图片中继的历史修复：pw0(内存)/fm8(落库) 层把本地图片 fragment 合回服务器响应。
+    // 2) 通用历史清理/快照 + 专家图片保留。2.2.1=fm8/rl8，2.2.2=gm8/sl8。
     private void installExpertHistoryImagePreserver(final ClassLoader cl) {
-        try {
-            Class<?> fm8 = cl.loadClass("fm8");
-            int ctorCount = 0;
-            for (Constructor<?> ctor : fm8.getDeclaredConstructors()) {
-                hook(ctor).intercept(new Hooker() {
-                    @Override public Object intercept(Chain chain) throws Throwable {
-                        Object r = chain.proceed();
-                        try { liveFm8 = chain.getThisObject(); } catch (Throwable ignored) {}
-                        return r;
-                    }
-                });
-                ctorCount++;
-            }
-
-            int writeCount = 0;
-            for (Method m : fm8.getDeclaredMethods()) {
-                Class<?>[] pts = m.getParameterTypes();
-                if (!"b".equals(m.getName()) || pts.length != 7
-                        || pts[0] != String.class || pts[1] != int.class
-                        || !ArrayList.class.isAssignableFrom(pts[4])) continue;
-                hook(m).intercept(new Hooker() {
-                    @Override public Object intercept(Chain chain) throws Throwable {
-                        try {
+        int repoCount = 0;
+        int ctorCount = 0;
+        int writeCount = 0;
+        for (String repoName : new String[]{"gm8", "fm8"}) {
+            try {
+                final Class<?> repo = cl.loadClass(repoName);
+                ArrayList<Method> writers = new ArrayList<>();
+                for (Method m : repo.getDeclaredMethods()) {
+                    Class<?>[] pts = m.getParameterTypes();
+                    if ("b".equals(m.getName()) && pts.length == 7
+                            && pts[0] == String.class && pts[1] == int.class
+                            && List.class.isAssignableFrom(pts[4])) writers.add(m);
+                }
+                if (writers.isEmpty()) continue; // 当前 fm8 是 synthetic Transaction，不能当仓库捕获。
+                repoCount++;
+                for (Constructor<?> ctor : repo.getDeclaredConstructors()) {
+                    hook(ctor).intercept(new Hooker() {
+                        @Override public Object intercept(Chain chain) throws Throwable {
+                            Object r = chain.proceed();
                             liveFm8 = chain.getThisObject();
-                            preserveImagesBeforeLocalWrite(cl, chain.getThisObject(), chain.getArgs().toArray());
-                        } catch (Throwable t) {
-                            extLog("[HISTORY] fm8 preserve err: " + t + "\n" + stackToString(t));
+                            return r;
                         }
-                        return chain.proceed();
-                    }
-                });
-                writeCount++;
-            }
-            log("installed expert history DB preserver fm8 ctor x" + ctorCount + " write x" + writeCount);
-        } catch (Throwable t) {
-            log("installExpertHistoryImagePreserver fm8 failed: " + t);
+                    });
+                    ctorCount++;
+                }
+                for (Method writer : writers) {
+                    hook(writer).intercept(new Hooker() {
+                        @Override public Object intercept(Chain chain) throws Throwable {
+                            Object[] args = chain.getArgs().toArray();
+                            try {
+                                liveFm8 = chain.getThisObject();
+                                if (isNoCensor()) {
+                                    String sid = args.length > 0 && args[0] instanceof String
+                                            ? (String) args[0] : null;
+                                    Object rows = args.length > 4 ? args[4] : null;
+                                    int restored = ResponsePreserver.restoreRepositoryRows(cl, sid, rows);
+                                    if (restored > 0) {
+                                        log("restored preserved responses before history write=" + restored
+                                                + " sid=" + sid);
+                                    }
+                                }
+                                int cleaned = HistoryBridge.sanitizeRepositoryRows(args);
+                                if (cleaned > 0) log("history repository prompts cleaned=" + cleaned);
+                                preserveImagesBeforeLocalWrite(cl, chain.getThisObject(), args);
+                            } catch (Throwable t) {
+                                extLog("[HISTORY] repository preserve err: " + t + "\n" + stackToString(t));
+                            }
+                            return chain.proceed();
+                        }
+                    });
+                    writeCount++;
+                }
+            } catch (Throwable ignored) {}
         }
+        log("installed history repositories=" + repoCount + " ctor=" + ctorCount + " write=" + writeCount);
 
         try {
             Class<?> pw0 = cl.loadClass("pw0");
@@ -2541,22 +4955,43 @@ public class Main extends XposedModule {
                 hook(ctor).intercept(new Hooker() {
                     @Override public Object intercept(Chain chain) throws Throwable {
                         Object r = chain.proceed();
-                        try { preserveImagesInHistoryResponse(cl, chain.getThisObject()); }
+                        try {
+                            if (isNoCensor()) {
+                                int restored = ResponsePreserver.restoreHistoryResponse(
+                                        cl, chain.getThisObject());
+                                if (restored > 0) {
+                                    log("restored preserved responses in online history=" + restored);
+                                }
+                            }
+                        } catch (Throwable t) {
+                            extLog("[HISTORY] response restore err: " + t + "\n" + stackToString(t));
+                        }
+                        try {
+                            // Capture the final form after expert relay restores FILE fragments
+                            // and removes its internal vision-description text.
+                            preserveImagesInHistoryResponse(cl, chain.getThisObject());
+                        } catch (Throwable t) {
+                            extLog("[HISTORY] pw0 image preserve err: " + t + "\n" + stackToString(t));
+                        }
+                        try {
+                            HistoryBridge.Result bridge = HistoryBridge.processHistoryResponse(chain.getThisObject());
+                            if (bridge.cleaned > 0) log("online history prompts cleaned=" + bridge.cleaned);
+                        }
                         catch (Throwable t) {
-                            extLog("[HISTORY] pw0 preserve err: " + t + "\n" + stackToString(t));
+                            extLog("[HISTORY] pw0 bridge err: " + t + "\n" + stackToString(t));
                         }
                         return r;
                     }
                 });
                 n++;
             }
-            log("installed expert history memory preserver pw0 ctor x" + n);
+            log("installed online history bridge pw0 ctor x" + n);
         } catch (Throwable t) {
             log("installExpertHistoryImagePreserver pw0 failed: " + t);
         }
     }
 
-    // 3) 发送点捕获完整 List<fp>（图片唯一完整来源），供中继按 sid 落盘。
+    // 3) 发送点捕获完整 List<fp>（图片唯一完整来源）及 tp.f() 当前会话模型。
     private void installExpertImageFpCapture(final ClassLoader cl) {
         hookSendPointFps(cl, "fu0", true);
         hookSendPointFps(cl, "uu0", false);
@@ -2569,25 +5004,46 @@ public class Main extends XposedModule {
             hook(y).intercept(new Hooker() {
                 @Override public Object intercept(Chain chain) throws Throwable {
                     if (!isExpertRelayEnabled()) return chain.proceed();
+                    tlPendingFps.remove();
+                    tlPendingModel.remove();
                     try {
-                        List fps = null;
-                        if (directList) {
-                            Object v = fieldByName(chain.getThisObject(), "i");   // fu0.i = List<fp>
-                            if (v instanceof List) fps = (List) v;
-                        } else {
-                            Object kv = fieldByName(chain.getThisObject(), "f");   // uu0.f = kv 消息
-                            Object v = kv == null ? null : invokeNoArg(kv, "l");    // kv.l() = List<fp>
-                            if (v instanceof List) fps = (List) v;
+                        try {
+                            List fps = null;
+                            if (directList) {
+                                Object v = fieldByName(chain.getThisObject(), "i");   // fu0.i = List<fp>
+                                if (v instanceof List) fps = (List) v;
+                            } else {
+                                Object kv = fieldByName(chain.getThisObject(), "f");   // uu0.f = kv 消息
+                                Object v = kv == null ? null : invokeNoArg(kv, "l");    // kv.l() = List<fp>
+                                if (v instanceof List) fps = (List) v;
+                            }
+                            int imageCount = countImageFpList(fps);
+                            if (imageCount > 0) {
+                                String model = readSendPointModel(chain.getThisObject(), directList);
+                                tlPendingFps.set(fps);
+                                if (model != null) tlPendingModel.set(model);
+                                extLog("[RELAY] send-point " + cls + " images=" + imageCount
+                                        + " effectiveModel=" + model);
+                            }
+                        } catch (Throwable t) {
+                            extLog("[RELAY] fp/model capture(" + cls + ") err: " + t);
                         }
-                        if (fps != null && countImageFpList(fps) > 0) {
-                            tlPendingFps.set(fps);
-                        }
-                    } catch (Throwable t) { extLog("[RELAY] fp capture(" + cls + ") err: " + t); }
-                    return chain.proceed();
+                        return chain.proceed();
+                    } finally {
+                        // transport normally consumes both values synchronously; clear leftovers on every exit.
+                        tlPendingFps.remove();
+                        tlPendingModel.remove();
+                    }
                 }
             });
             log("installed send-point fp capture on " + cls + ".y");
         } catch (Throwable t) { log("hookSendPointFps " + cls + " failed: " + t); }
+    }
+
+    private static String readSendPointModel(Object sendPoint, boolean directList) {
+        Object session = fieldByName(sendPoint, directList ? "g" : "h"); // fu0.g / uu0.h = tp
+        Object model = session == null ? null : invokeNoArg(session, "f"); // tp.f() = current model
+        return model instanceof String ? (String) model : null;
     }
 
     // 4) 捕获一个活着的 q71（completion PoW 管理器）实例
@@ -2595,13 +5051,22 @@ public class Main extends XposedModule {
         try {
             Class<?> q71 = cl.loadClass("q71");
             int n = 0;
+            for (Constructor<?> ctor : q71.getDeclaredConstructors()) {
+                hook(ctor).intercept(new Hooker() {
+                    @Override public Object intercept(Chain chain) throws Throwable {
+                        Object result = chain.proceed();
+                        captureApiManagers(chain.getThisObject());
+                        return result;
+                    }
+                });
+                n++;
+            }
             for (Method m : q71.getDeclaredMethods()) {
                 String nm = m.getName();
                 if ((nm.equals("j") || nm.equals("b")) && m.getParameterTypes().length == 1) {
                     hook(m).intercept(new Hooker() {
                         @Override public Object intercept(Chain chain) throws Throwable {
-                            try { if (liveQ71 == null) { liveQ71 = chain.getThisObject(); extLog("[VP] captured liveQ71"); } }
-                            catch (Throwable ignored) {}
+                            captureApiManagers(chain.getThisObject());
                             return chain.proceed();
                         }
                     });
@@ -2610,6 +5075,19 @@ public class Main extends XposedModule {
             }
             log("installed pow manager capture on q71 x" + n);
         } catch (Throwable t) { log("installPowManagerCapture failed: " + t); }
+    }
+
+    private static void captureApiManagers(Object q71) {
+        if (q71 == null) return;
+        boolean firstQ = liveQ71 == null;
+        liveQ71 = q71;
+        Object transport = fieldByName(q71, "f");
+        boolean firstTransport = liveR92 == null && transport != null;
+        if (transport != null) liveR92 = transport;
+        if (firstQ || firstTransport) {
+            extLog("[VP] captured API managers q71=" + (liveQ71 != null)
+                    + " transport=" + (liveR92 != null));
+        }
     }
 
     private static int countImageFpList(List fps) {
@@ -2737,7 +5215,7 @@ public class Main extends XposedModule {
         boolean marker = false;
         if (incomingRows != null) {
             for (Object incoming : incomingRows) {
-                if (incoming == null || !"rl8".equals(simpleName(incoming))) continue;
+                if (!isHistoryPersistenceRow(incoming)) continue;
                 String json = stringField(incoming, "l");
                 if (!serializedMayContainRelayMarker(json)) continue;
                 List fragments = decodeStaticFragments(cl, json);
@@ -2772,7 +5250,7 @@ public class Main extends XposedModule {
         int candidates = 0;
         int detailLogs = 0;
         for (Object incoming : incomingRows) {
-            if (incoming == null || !"rl8".equals(simpleName(incoming))) continue;
+            if (!isHistoryPersistenceRow(incoming)) continue;
             Integer messageId = intField(incoming, "a");
             if (messageId == null) continue;
             List serverFragments = decodedIncoming.get(incoming);
@@ -2901,8 +5379,14 @@ public class Main extends XposedModule {
         File out = relayImageFile(sid);
         if (out == null) { extLog("[HISTORY] persistImages skip: sid 文件名不安全 sid=" + truncateForLog(sid, 80)); return; }
         try {
-            Class<?> qs7 = cl.loadClass("qs7");
-            Constructor<?> ctor = qs7.getDeclaredConstructor(List.class);
+            Constructor<?> ctor = null;
+            for (String name : new String[]{"rs7", "qs7"}) {
+                try {
+                    ctor = cl.loadClass(name).getDeclaredConstructor(List.class);
+                    break;
+                } catch (Throwable ignored) {}
+            }
+            if (ctor == null) throw new NoSuchMethodException("FILE fragment(List) not found");
             ctor.setAccessible(true);
             Object frag = ctor.newInstance(imageFps);
             String json = encodeStaticFragments(cl, java.util.Collections.singletonList(frag));
@@ -3066,18 +5550,14 @@ public class Main extends XposedModule {
     }
 
     private static String stripInjectedSystemPrompt(String text) {
-        if (text == null) return "";
-        String head = text;
-        int lead = 0;
-        while (lead < head.length() && (head.charAt(lead) == '\n' || head.charAt(lead) == '\r'
-                || head.charAt(lead) == ' ')) lead++;
-        if (!head.startsWith("<system>", lead)) return text;
-        int close = head.indexOf("</system>", lead);
-        if (close < 0) return text;
-        int after = close + "</system>".length();
-        while (after < head.length() && (head.charAt(after) == '\n' || head.charAt(after) == '\r'
-                || head.charAt(after) == ' ')) after++;
-        return head.substring(after);
+        return HistoryBridge.stripInjectedSystemPrompts(text);
+    }
+
+    private static boolean isHistoryPersistenceRow(Object row) {
+        if (row == null) return false;
+        String name = simpleName(row);
+        if ("rl8".equals(name) || "sl8".equals(name)) return true;
+        return intField(row, "a") != null && fieldByName(row, "l") instanceof String;
     }
 
     private static boolean retainOnlyImageFiles(Object fragment) {
@@ -3113,7 +5593,7 @@ public class Main extends XposedModule {
 
     private static boolean isFileFragment(Object fragment) {
         if (fragment == null) return false;
-        if ("qs7".equals(simpleName(fragment))) return true;
+        if ("qs7".equals(simpleName(fragment)) || "rs7".equals(simpleName(fragment))) return true;
         return "FILE".equals(String.valueOf(fieldByName(fragment, "a")));
     }
 
@@ -3163,10 +5643,21 @@ public class Main extends XposedModule {
     // ── ★正式功能：expert 模式带图 → 后台视觉描述中继（同步就地改写请求）────────
     private boolean relayGateMatches(Object reqObj) {
         if (!isExpertRelayEnabled()) return false;
-        if (reqObj == null || !"ew0".equals(simpleName(reqObj))) return false;
-        if (!"expert".equals(String.valueOf(fieldByName(reqObj, "i")))) return false;
+        if (reqObj == null) return false;
+        // One-shot association: every transport call consumes the send-point model captured for this request.
+        String capturedModel = ew0EffectiveModels.remove(reqObj);
+        if (!"ew0".equals(simpleName(reqObj))) return false;
         Object files = fieldByName(reqObj, "d");
-        return (files instanceof java.util.List) && !((java.util.List) files).isEmpty();
+        boolean hasFiles = files instanceof java.util.List && !((java.util.List) files).isEmpty();
+        Object explicitModel = fieldByName(reqObj, "i");
+        boolean matches = ExpertRelayGate.matches(explicitModel, capturedModel, hasFiles);
+        if (matches && explicitModel == null) {
+            extLog("[RELAY] 续轮 model_type=null，使用发送点 effectiveModel=" + capturedModel
+                    + " req=" + System.identityHashCode(reqObj)
+                    + " parent=" + (fieldByName(reqObj, "b") != null)
+                    + " files=" + ((List) files).size());
+        }
+        return matches;
     }
 
     // 已登记待中继的冷 Flow(b41 实例) -> {expertReq, r92}。等下游 collect(b41.b) 时才跑中继。
@@ -3398,6 +5889,1162 @@ public class Main extends XposedModule {
         }
     }
 
+    private LocalApiGateway.CompletionResult executeLocalApiCompletion(
+            LocalApiGateway.CompletionRequest request,
+            LocalApiGateway.DeltaSink sink) throws Exception {
+        final long requestStarted = System.currentTimeMillis();
+        final long deadline = request != null && request.deadlineAtMs > 0L
+                ? request.deadlineAtMs : requestStarted + LOCAL_API_REQUEST_BUDGET_MS;
+        tlLocalApiDeadline.set(deadline);
+        if (request == null || request.prompt == null || request.prompt.trim().length() == 0) {
+            tlLocalApiDeadline.remove();
+            throw new LocalApiGateway.GatewayException(400, "empty_prompt",
+                    "Prompt translated to an empty string");
+        }
+        if (!isLocalApiEnabled()) {
+            tlLocalApiDeadline.remove();
+            throw new LocalApiGateway.GatewayException(503, "gateway_disabled",
+                    "server_error", "Local API has been disabled");
+        }
+        ClassLoader cl = hostClassLoader;
+        Object transport = liveR92;
+        Object powManager = liveQ71;
+        if (cl == null || transport == null || powManager == null) {
+            tlLocalApiDeadline.remove();
+            throw new LocalApiGateway.GatewayException(503, "host_not_ready",
+                    "server_error", "DeepSeek native transport is still initializing");
+        }
+        tlLocalApiSink.set(sink);
+
+        final boolean agentRequest = request.agentic();
+        if (agentRequest) LOCAL_API_AGENT_WAITERS.incrementAndGet();
+        boolean acquired = false;
+        try {
+            acquired = awaitLocalApiCompletionSlot(request);
+        } catch (LocalApiGateway.GatewayException e) {
+            if (agentRequest) LOCAL_API_AGENT_WAITERS.decrementAndGet();
+            tlLocalApiDeadline.remove();
+            tlLocalApiSink.remove();
+            throw e;
+        }
+        if (!acquired) {
+            if (agentRequest) LOCAL_API_AGENT_WAITERS.decrementAndGet();
+            tlLocalApiDeadline.remove();
+            tlLocalApiSink.remove();
+            if (request.auxiliary() && !request.agentic()) {
+                LocalApiGateway.diagnostic("AUXILIARY_SKIPPED id=" + request.requestId
+                        + " reason=native_lane_busy");
+                return new LocalApiGateway.CompletionResult("", "", "stop");
+            }
+            throw new LocalApiGateway.GatewayException(429, "too_many_requests",
+                    "rate_limit_error", "The native completion lane is busy; retry shortly");
+        }
+
+        long started = requestStarted;
+        try {
+            ensureLocalApiTime("starting the native request");
+            // DeepSeek throttles /chat_session/create when callers create/delete on every API
+            // request. Reuse one hidden branchable session per native model, workload lane and
+            // hashed client-conversation scope. Every API request still carries its complete
+            // transcript and parent=null, so no context leaks between calls; /clear and /new
+            // rotate the client scope and therefore the native branch.
+            String sessionKey = localApiSessionKey(request);
+            String sid = reusableApiSession(cl, transport, sessionKey);
+            long[] retryWaits = {0L, 1500L, 3500L};
+            LocalApiGateway.GatewayException last = null;
+            for (int attempt = 0; attempt < retryWaits.length; attempt++) {
+                if (retryWaits[attempt] > 0L) {
+                    sleepLocalApi(retryWaits[attempt], "retrying DeepSeek transport");
+                }
+                ensureLocalApiTime("preparing DeepSeek transport");
+                final boolean[] emitted = {false};
+                LocalApiGateway.DeltaSink trackedSink = sink == null ? null
+                        : new LocalApiGateway.DeltaSink() {
+                    @Override public void onUpstreamStarted() throws Exception {
+                        sink.onUpstreamStarted();
+                    }
+                    @Override public boolean onText(String delta) throws Exception {
+                        if (delta != null && delta.length() > 0) emitted[0] = true;
+                        return sink.onText(delta);
+                    }
+                    @Override public boolean onReasoning(String delta) throws Exception {
+                        if (delta != null && delta.length() > 0) emitted[0] = true;
+                        return sink.onReasoning(delta);
+                    }
+                    @Override public boolean isCancelled() { return sink.isCancelled(); }
+                    @Override public boolean isSatisfied() { return sink.isSatisfied(); }
+                };
+                try {
+                    awaitLocalApiNativeStart();
+                    String pow = mintApiPowWithRetry(cl, powManager);
+                    LocalApiGateway.CompletionResult result = executeNativeApiCompletionOnce(
+                            cl, transport, sid, request, pow, trackedSink);
+                    resetLocalApiRateLimitStreak();
+                    log("[LOCAL_API] native completion id=" + request.requestId
+                            + " model=" + request.nativeModel
+                            + " thinking=" + request.reasoning
+                            + " attempt=" + (attempt + 1)
+                            + " text_chars=" + result.text.length()
+                            + " reasoning_chars=" + result.reasoning.length()
+                            + " ms=" + (System.currentTimeMillis() - started));
+                    // A collector exception cancels a captured tool generation locally, but the
+                    // server needs a short grace period to clear parallel_chat_limit state.
+                    extendLocalApiCooldown("tool_calls".equals(result.finishReason)
+                            ? 1800L : 500L);
+                    return result;
+                } catch (LocalApiGateway.GatewayException e) {
+                    last = e;
+                    if ("invalid_api_session".equals(e.code)) {
+                        invalidateReusableApiSession(sessionKey, sid);
+                        sid = reusableApiSession(cl, transport, sessionKey);
+                        LocalApiGateway.diagnostic("SESSION_RECREATED id="
+                                + request.requestId + " model=" + request.nativeModel);
+                    }
+                    boolean nativeBusy = "upstream_rate_limit".equals(e.code)
+                            || isNativeBusyLimit(e.getMessage());
+                    if (nativeBusy) {
+                        extendLocalApiRateLimitCooldown();
+                    }
+                    // A second parallel-chat rejection means the prior native generation has not
+                    // released yet. Long 15/25/40-second retries used to hold this permit and
+                    // turn one stale request into a minutes-long queue for every later request.
+                    if (nativeBusy && attempt >= 1) throw e;
+                    if (emitted[0] || !isTransientApiFailure(e)
+                            || attempt + 1 >= retryWaits.length) throw e;
+                    log("[LOCAL_API] transient completion retry id=" + request.requestId
+                            + " attempt=" + (attempt + 1) + " code=" + e.code
+                            + " reason=" + safeThrowableMessage(e));
+                    LocalApiGateway.diagnostic("NATIVE_RETRY id=" + request.requestId
+                            + " attempt=" + (attempt + 1) + " code=" + e.code
+                            + " reason=" + safeThrowableMessage(e));
+                }
+            }
+            throw last == null ? new LocalApiGateway.GatewayException(502,
+                    "upstream_retry_exhausted", "server_error",
+                    "DeepSeek transport retry exhausted") : last;
+        } finally {
+            LOCAL_API_COMPLETION_SLOTS.release();
+            if (agentRequest) {
+                LOCAL_API_AGENT_WAITERS.decrementAndGet();
+                localApiAgentPriorityUntil = Math.max(localApiAgentPriorityUntil,
+                        System.currentTimeMillis() + 1200L);
+            }
+            tlLocalApiDeadline.remove();
+            tlLocalApiSink.remove();
+            scheduleReusableApiSessionMaintenance();
+        }
+    }
+
+    private static boolean awaitLocalApiCompletionSlot(
+            LocalApiGateway.CompletionRequest request)
+            throws LocalApiGateway.GatewayException {
+        boolean auxiliary = request != null && request.auxiliary() && !request.agentic();
+        long maxWait = auxiliary ? LOCAL_API_AUX_QUEUE_WAIT_MS
+                : (request != null && request.agentic()
+                        ? LOCAL_API_AGENT_QUEUE_WAIT_MS : LOCAL_API_CHAT_QUEUE_WAIT_MS);
+        long started = System.currentTimeMillis();
+        long waitUntil = started
+                + Math.min(maxWait, Math.max(0L, remainingLocalApiTimeMs() - 1000L));
+        while (System.currentTimeMillis() < waitUntil) {
+            ensureLocalApiClientActive("waiting for the native completion lane");
+            long now = System.currentTimeMillis();
+            boolean agentHasPriority = auxiliary && (LOCAL_API_AGENT_WAITERS.get() > 0
+                    || now < localApiAgentPriorityUntil);
+            if (!agentHasPriority) {
+                long slice = Math.min(LOCAL_API_QUEUE_POLL_MS, waitUntil - now);
+                try {
+                    if (LOCAL_API_COMPLETION_SLOTS.tryAcquire(
+                            Math.max(1L, slice), TimeUnit.MILLISECONDS)) {
+                        if (auxiliary) {
+                            localApiNextAuxiliaryStartAt = System.currentTimeMillis() + 4000L;
+                        }
+                        if (System.currentTimeMillis() > started) {
+                            LocalApiGateway.diagnostic("NATIVE_QUEUE_WAIT id="
+                                    + request.requestId + " wait_ms="
+                                    + (System.currentTimeMillis() - started));
+                        }
+                        return true;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new LocalApiGateway.GatewayException(503, "request_interrupted",
+                            "server_error", "Request was interrupted before execution");
+                }
+            } else {
+                sleepLocalApi(Math.min(LOCAL_API_QUEUE_POLL_MS, waitUntil - now),
+                        "prioritizing the interactive Agent turn");
+            }
+        }
+        return false;
+    }
+
+    private static String localApiSessionKey(LocalApiGateway.CompletionRequest request) {
+        String model = request == null || request.nativeModel == null
+                || request.nativeModel.length() == 0 ? "default" : request.nativeModel;
+        String lane = "#chat";
+        if (request != null && request.auxiliary()) {
+            lane = request.agentic() ? "#aux-agent" : "#aux";
+        } else if (request != null && request.agentic()) {
+            lane = "#agent";
+        }
+        String scope = request == null ? null : request.clientSessionScope;
+        return model + lane + (scope == null || scope.length() == 0 ? "" : "#s-" + scope);
+    }
+
+    private LocalApiGateway.CompletionResult executeNativeApiCompletionOnce(
+            ClassLoader cl, Object transport, String sid,
+            LocalApiGateway.CompletionRequest request, String pow,
+            LocalApiGateway.DeltaSink sink) throws Exception {
+        Object nativeRequest = newLocalApiNativeRequest(cl, sid, request, pow);
+        Method completion = findNativeCompletionMethod(transport, nativeRequest);
+        if (completion == null) {
+            throw new LocalApiGateway.GatewayException(503, "transport_method_missing",
+                    "server_error", "DeepSeek completion transport method was not found");
+        }
+        completion.setAccessible(true);
+        Object flow;
+        try {
+            flow = completion.invoke(transport, nativeRequest, null);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new LocalApiGateway.GatewayException(502, "upstream_start_failed",
+                    "server_error", "DeepSeek rejected the completion: "
+                            + safeThrowableMessage(cause));
+        }
+        if (flow == null) {
+            throw new LocalApiGateway.GatewayException(503, "empty_upstream_flow",
+                    "server_error", "DeepSeek returned no completion stream");
+        }
+        return collectLocalApiFlow(cl, flow, sink);
+    }
+
+    private static boolean isTransientApiFailure(LocalApiGateway.GatewayException error) {
+        if (error == null) return false;
+        if ("pow_unavailable".equals(error.code)
+                || "upstream_start_failed".equals(error.code)
+                || "empty_upstream_flow".equals(error.code)
+                || "upstream_timeout".equals(error.code)
+                || "upstream_rate_limit".equals(error.code)
+                || "invalid_api_session".equals(error.code)
+                || "empty_completion".equals(error.code)) return true;
+        String message = String.valueOf(error.getMessage()).toLowerCase(Locale.US);
+        if ("upstream_rejected".equals(error.code)) {
+            return isNativeBusyLimit(message) || message.contains("rate_limit")
+                    || message.contains("too frequent") || message.contains("过于频繁");
+        }
+        if (!"upstream_stream_failed".equals(error.code)) return false;
+        return message.contains("unknownhost") || message.contains("unable to resolve")
+                || message.contains("socket") || message.contains("connection")
+                || message.contains("timeout") || message.contains("reset")
+                || message.contains("abort") || message.contains("network")
+                || message.contains("rate_limit") || message.contains("too frequent")
+                || message.contains("过于频繁") || isNativeBusyLimit(message);
+    }
+
+    private static void awaitLocalApiNativeStart()
+            throws LocalApiGateway.GatewayException {
+        long waited = 0L;
+        synchronized (LOCAL_API_RATE_LOCK) {
+            long now = System.currentTimeMillis();
+            long wait = Math.max(0L, localApiNextNativeStartAt - now);
+            if (wait > 0L) {
+                sleepLocalApi(wait, "pacing DeepSeek requests");
+                waited = wait;
+            }
+            localApiNextNativeStartAt = System.currentTimeMillis()
+                    + LOCAL_API_MIN_START_INTERVAL_MS;
+        }
+        if (waited > 0L) {
+            LocalApiGateway.diagnostic("NATIVE_PACED wait_ms=" + waited);
+        }
+    }
+
+    /**
+     * Claude Code sends title/suggestion requests alongside the interactive Agent turn.  Give the
+     * tool-bearing turn priority and pace the small-model lane independently so metadata traffic
+     * cannot exhaust DeepSeek's account-wide burst limiter.
+     */
+    private static void awaitLocalApiAuxiliaryTurn()
+            throws LocalApiGateway.GatewayException {
+        long waited = 0L;
+        while (true) {
+            ensureLocalApiTime("waiting for the interactive Agent turn");
+            long now = System.currentTimeMillis();
+            long waitForPriority = LOCAL_API_AGENT_WAITERS.get() > 0
+                    ? 500L : Math.max(0L, localApiAgentPriorityUntil - now);
+            long waitForPacing = Math.max(0L, localApiNextAuxiliaryStartAt - now);
+            long wait = Math.max(waitForPriority, waitForPacing);
+            if (wait <= 0L) break;
+            long slice = Math.min(500L, wait);
+            sleepLocalApi(slice, "pacing Claude auxiliary requests");
+            waited += slice;
+        }
+        localApiNextAuxiliaryStartAt = System.currentTimeMillis() + 4000L;
+        if (waited > 0L) {
+            LocalApiGateway.diagnostic("AUXILIARY_PACED wait_ms=" + waited);
+        }
+    }
+
+    private static void extendLocalApiCooldown(long delayMs) {
+        synchronized (LOCAL_API_RATE_LOCK) {
+            localApiNextNativeStartAt = Math.max(localApiNextNativeStartAt,
+                    System.currentTimeMillis() + Math.max(0L, delayMs));
+        }
+    }
+
+    private static void extendLocalApiRateLimitCooldown() {
+        long delay;
+        synchronized (LOCAL_API_RATE_LOCK) {
+            localApiRateLimitStreak = Math.min(4, localApiRateLimitStreak + 1);
+            delay = localApiRateLimitStreak == 1 ? 2_000L
+                    : localApiRateLimitStreak == 2 ? 4_000L
+                    : localApiRateLimitStreak == 3 ? 8_000L : 12_000L;
+            localApiNextNativeStartAt = Math.max(localApiNextNativeStartAt,
+                    System.currentTimeMillis() + delay);
+        }
+        LocalApiGateway.diagnostic("NATIVE_RATE_LIMIT cooldown_ms=" + delay
+                + " streak=" + localApiRateLimitStreak);
+    }
+
+    private static void resetLocalApiRateLimitStreak() {
+        synchronized (LOCAL_API_RATE_LOCK) {
+            localApiRateLimitStreak = 0;
+        }
+    }
+
+    private static long remainingLocalApiTimeMs() {
+        Long deadline = tlLocalApiDeadline.get();
+        if (deadline == null) return LOCAL_API_REQUEST_BUDGET_MS;
+        return Math.max(0L, deadline.longValue() - System.currentTimeMillis());
+    }
+
+    private static void ensureLocalApiClientActive(String stage)
+            throws LocalApiGateway.GatewayException {
+        LocalApiGateway.DeltaSink sink = tlLocalApiSink.get();
+        if (sink != null && sink.isCancelled()) {
+            throw new LocalApiGateway.GatewayException(499, "client_closed_request",
+                    "server_error", "Client disconnected while " + stage);
+        }
+    }
+
+    private static void ensureLocalApiTime(String stage)
+            throws LocalApiGateway.GatewayException {
+        ensureLocalApiClientActive(stage);
+        if (remainingLocalApiTimeMs() <= 1000L) {
+            throw new LocalApiGateway.GatewayException(504, "request_deadline_exceeded",
+                    "server_error", "Local API request deadline exceeded while " + stage);
+        }
+    }
+
+    private static void sleepLocalApi(long delayMs, String stage)
+            throws LocalApiGateway.GatewayException {
+        if (delayMs <= 0L) return;
+        long remaining = remainingLocalApiTimeMs();
+        if (remaining <= delayMs + 1000L) {
+            throw new LocalApiGateway.GatewayException(504, "request_deadline_exceeded",
+                    "server_error", "Local API request deadline exceeded while " + stage);
+        }
+        long end = System.currentTimeMillis() + delayMs;
+        while (System.currentTimeMillis() < end) {
+            ensureLocalApiClientActive(stage);
+            try {
+                Thread.sleep(Math.min(LOCAL_API_QUEUE_POLL_MS,
+                        Math.max(1L, end - System.currentTimeMillis())));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new LocalApiGateway.GatewayException(503, "request_interrupted",
+                        "server_error", "Interrupted while " + stage);
+            }
+        }
+    }
+
+    private String reusableApiSession(ClassLoader cl, Object transport, String model)
+            throws LocalApiGateway.GatewayException {
+        String key = model == null || model.length() == 0 ? "default" : model;
+        synchronized (LOCAL_API_SESSION_LOCK) {
+            loadReusableApiSessionsLocked();
+            String existing = LOCAL_API_SESSIONS.get(key);
+            if (isUsableSessionId(existing)) {
+                touchReusableApiSessionLocked(key, System.currentTimeMillis());
+                return existing;
+            }
+
+            String lastError = "unknown";
+            long[] waits = {0L, 1500L, 3000L, 6000L, 12000L, 18000L};
+            for (int attempt = 0; attempt < waits.length; attempt++) {
+                if (waits[attempt] > 0L) {
+                    sleepLocalApi(waits[attempt], "waiting to create an API session");
+                }
+                ensureLocalApiTime("creating an API session");
+                String created = createThrowawaySession(cl, transport);
+                if (isUsableSessionId(created)) {
+                    LOCAL_API_SESSIONS.put(key, created);
+                    LOCAL_API_SESSION_LAST_USED.put(key, System.currentTimeMillis());
+                    persistReusableApiSessionsLocked();
+                    log("[LOCAL_API] reusable session created model=" + key
+                            + " attempt=" + (attempt + 1));
+                    return created;
+                }
+                lastError = localApiLastSessionError;
+                log("[LOCAL_API] reusable session create retry model=" + key
+                        + " attempt=" + (attempt + 1) + " reason=" + lastError);
+            }
+            throw new LocalApiGateway.GatewayException(503, "session_create_failed",
+                    "server_error", "DeepSeek could not create the reusable API session after retries: "
+                            + lastError);
+        }
+    }
+
+    private String mintApiPowWithRetry(ClassLoader cl, Object powManager)
+            throws LocalApiGateway.GatewayException {
+        synchronized (LOCAL_API_POW_SERIAL_LOCK) {
+            return mintApiPowWithRetrySerial(cl, powManager);
+        }
+    }
+
+    private String mintApiPowWithRetrySerial(ClassLoader cl, Object powManager)
+            throws LocalApiGateway.GatewayException {
+        String lastError = "empty PoW response";
+        long[] waits = {0L, 1000L, 3000L};
+        for (int attempt = 0; attempt < waits.length; attempt++) {
+            if (waits[attempt] > 0L) {
+                sleepLocalApi(waits[attempt], "waiting for completion PoW");
+            }
+            ensureLocalApiTime("requesting completion PoW");
+            try {
+                Object result = mintCompletionPowBounded(cl, powManager,
+                        Math.min(10_000L, Math.max(1000L, remainingLocalApiTimeMs() - 1000L)));
+                if (result instanceof String && ((String) result).length() > 0) {
+                    if (attempt > 0) log("[LOCAL_API] PoW recovered attempt=" + (attempt + 1));
+                    return (String) result;
+                }
+                lastError = "DeepSeek returned an empty PoW token";
+            } catch (Throwable t) {
+                lastError = safeThrowableMessage(t);
+            }
+            log("[LOCAL_API] PoW retry attempt=" + (attempt + 1) + " reason=" + lastError);
+        }
+        throw new LocalApiGateway.GatewayException(503, "pow_unavailable",
+                "server_error", "DeepSeek PoW is unavailable after retries: " + lastError);
+    }
+
+    /**
+     * q71.j is a suspend network call. A broken Android network can leave runBlocking waiting
+     * indefinitely, which used to occupy the only native lane forever. Keep at most one PoW call
+     * alive and wait for it with a hard bound; a later retry may consume its delayed result.
+     */
+    private Object mintCompletionPowBounded(final ClassLoader cl, final Object powManager,
+                                            long timeoutMs) throws Throwable {
+        LocalApiPowTask task;
+        synchronized (LOCAL_API_POW_LOCK) {
+            task = localApiPowTask;
+            if (task == null) {
+                task = new LocalApiPowTask();
+                final LocalApiPowTask started = task;
+                Thread thread = new Thread(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            started.result = mintCompletionPow(cl, powManager);
+                        } catch (Throwable t) {
+                            started.failure = t;
+                        } finally {
+                            started.done.countDown();
+                        }
+                    }
+                }, "Deekseep-API-PoW");
+                thread.setDaemon(true);
+                task.thread = thread;
+                localApiPowTask = task;
+                thread.start();
+            }
+        }
+        boolean finished;
+        try {
+            finished = task.done.await(Math.max(1000L, timeoutMs), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        }
+        if (!finished) {
+            Thread thread = task.thread;
+            if (thread != null) thread.interrupt();
+            throw new java.util.concurrent.TimeoutException(
+                    "DeepSeek PoW request exceeded " + timeoutMs + " ms");
+        }
+        synchronized (LOCAL_API_POW_LOCK) {
+            if (localApiPowTask == task) localApiPowTask = null;
+        }
+        if (task.failure != null) throw task.failure;
+        return task.result;
+    }
+
+    private static final class LocalApiPowTask {
+        final CountDownLatch done = new CountDownLatch(1);
+        volatile Thread thread;
+        volatile Object result;
+        volatile Throwable failure;
+    }
+
+    private static void loadReusableApiSessionsLocked() {
+        if (localApiSessionsLoaded) return;
+        localApiSessionsLoaded = true;
+        LOCAL_API_SESSIONS.clear();
+        LOCAL_API_SESSION_LAST_USED.clear();
+        localApiSessionStatePersistedAt = System.currentTimeMillis();
+        String text = readSmallText(LOCAL_API_SESSION_FILE);
+        if (text == null || text.length() == 0) return;
+        try {
+            JSONObject object = new JSONObject(text);
+            JSONObject metadata = object.optJSONObject(LOCAL_API_SESSION_META_KEY);
+            JSONArray names = object.names();
+            if (names == null) return;
+            long loadedAt = System.currentTimeMillis();
+            for (int i = 0; i < names.length(); i++) {
+                String model = names.optString(i);
+                if (LOCAL_API_SESSION_META_KEY.equals(model)) continue;
+                String sid = object.optString(model, null);
+                if (isUsableSessionId(sid)) {
+                    LOCAL_API_SESSIONS.put(model, sid);
+                    long lastUsed = metadata == null ? loadedAt : metadata.optLong(model, loadedAt);
+                    LOCAL_API_SESSION_LAST_USED.put(model, lastUsed > 0L ? lastUsed : loadedAt);
+                }
+            }
+        } catch (Throwable t) {
+            log("[LOCAL_API] reusable session state ignored: " + safeThrowableMessage(t));
+        }
+    }
+
+    private static void persistReusableApiSessionsLocked() {
+        try {
+            JSONObject object = new JSONObject();
+            JSONObject metadata = new JSONObject();
+            for (Map.Entry<String, String> entry : LOCAL_API_SESSIONS.entrySet()) {
+                if (isUsableSessionId(entry.getValue())) {
+                    object.put(entry.getKey(), entry.getValue());
+                    metadata.put(entry.getKey(), reusableApiSessionLastUsedLocked(entry.getKey()));
+                }
+            }
+            object.put(LOCAL_API_SESSION_META_KEY, metadata);
+            overwriteTextFile(LOCAL_API_SESSION_FILE, object.toString());
+            localApiSessionStatePersistedAt = System.currentTimeMillis();
+        } catch (Throwable t) {
+            log("[LOCAL_API] reusable session state write failed: " + safeThrowableMessage(t));
+        }
+    }
+
+    private static long reusableApiSessionLastUsedLocked(String key) {
+        Long value = LOCAL_API_SESSION_LAST_USED.get(key);
+        return value == null || value.longValue() <= 0L
+                ? System.currentTimeMillis() : value.longValue();
+    }
+
+    private static void touchReusableApiSessionLocked(String key, long now) {
+        LOCAL_API_SESSION_LAST_USED.put(key, now);
+        if (now - localApiSessionStatePersistedAt >= LOCAL_API_SESSION_TOUCH_PERSIST_MS) {
+            persistReusableApiSessionsLocked();
+        }
+    }
+
+    private static boolean isLocalApiInternalSession(String sid) {
+        if (!isUsableSessionId(sid)) return false;
+        synchronized (LOCAL_API_SESSION_LOCK) {
+            loadReusableApiSessionsLocked();
+            return LOCAL_API_SESSIONS.containsValue(sid);
+        }
+    }
+
+    private static void invalidateReusableApiSession(String model, String sid) {
+        String key = model == null || model.length() == 0 ? "default" : model;
+        synchronized (LOCAL_API_SESSION_LOCK) {
+            loadReusableApiSessionsLocked();
+            String current = LOCAL_API_SESSIONS.get(key);
+            if (sid == null || sid.equals(current)) {
+                LOCAL_API_SESSIONS.remove(key);
+                LOCAL_API_SESSION_LAST_USED.remove(key);
+                persistReusableApiSessionsLocked();
+                log("[LOCAL_API] invalid reusable session removed model=" + key);
+            }
+        }
+    }
+
+    private void deleteReusableApiSessions() {
+        Object transport = liveR92;
+        ClassLoader cl = hostClassLoader;
+        if (transport == null || cl == null) return;
+        boolean acquired = false;
+        try {
+            acquired = LOCAL_API_COMPLETION_SLOTS.tryAcquire(30, TimeUnit.SECONDS);
+            if (!acquired) {
+                log("[LOCAL_API] cleanup skipped: native completion still active");
+                return;
+            }
+            List<String> keys;
+            synchronized (LOCAL_API_SESSION_LOCK) {
+                loadReusableApiSessionsLocked();
+                keys = new ArrayList<>(LOCAL_API_SESSIONS.keySet());
+            }
+            for (String key : keys) {
+                String sid;
+                synchronized (LOCAL_API_SESSION_LOCK) {
+                    sid = LOCAL_API_SESSIONS.get(key);
+                }
+                if (!isUsableSessionId(sid)) continue;
+                boolean deleted = deleteThrowawaySession(cl, transport, sid);
+                log("[LOCAL_API] reusable session deleted=" + deleted);
+                if (!deleted) continue;
+                synchronized (LOCAL_API_SESSION_LOCK) {
+                    if (sid.equals(LOCAL_API_SESSIONS.get(key))) {
+                        LOCAL_API_SESSIONS.remove(key);
+                        LOCAL_API_SESSION_LAST_USED.remove(key);
+                        persistReusableApiSessionsLocked();
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            log("[LOCAL_API] reusable session cleanup failed: " + safeThrowableMessage(t));
+        } finally {
+            if (acquired) LOCAL_API_COMPLETION_SLOTS.release();
+        }
+    }
+
+    private void scheduleReusableApiSessionMaintenance() {
+        while (true) {
+            int state = LOCAL_API_SESSION_MAINTENANCE_RUNNING.get();
+            if (state == 0) {
+                if (LOCAL_API_SESSION_MAINTENANCE_RUNNING.compareAndSet(0, 1)) break;
+            } else {
+                if (state == 1) {
+                    LOCAL_API_SESSION_MAINTENANCE_RUNNING.compareAndSet(1, 2);
+                }
+                return;
+            }
+        }
+        Thread worker = new Thread(new Runnable() {
+            @Override public void run() {
+                boolean rerun = false;
+                try {
+                    rerun = pruneReusableApiSessions();
+                } catch (Throwable t) {
+                    log("[LOCAL_API] reusable session maintenance failed: "
+                            + safeThrowableMessage(t));
+                } finally {
+                    int state = LOCAL_API_SESSION_MAINTENANCE_RUNNING.getAndSet(0);
+                    if (rerun || state == 2) scheduleReusableApiSessionMaintenance();
+                }
+            }
+        }, "Deekseep-API-Session-Prune");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private boolean pruneReusableApiSessions() {
+        Object transport = liveR92;
+        ClassLoader cl = hostClassLoader;
+        if (transport == null || cl == null || !isLocalApiEnabled()) return false;
+
+        final long now = System.currentTimeMillis();
+        final ArrayList<String> candidates = new ArrayList<>();
+        synchronized (LOCAL_API_SESSION_LOCK) {
+            loadReusableApiSessionsLocked();
+            ArrayList<String> keys = new ArrayList<>(LOCAL_API_SESSIONS.keySet());
+            Collections.sort(keys, new Comparator<String>() {
+                @Override public int compare(String left, String right) {
+                    return Long.compare(reusableApiSessionLastUsedLocked(left),
+                            reusableApiSessionLastUsedLocked(right));
+                }
+            });
+            int excess = Math.max(0, keys.size() - LOCAL_API_SESSION_MAX);
+            for (String key : keys) {
+                long age = Math.max(0L, now - reusableApiSessionLastUsedLocked(key));
+                if (age <= LOCAL_API_SESSION_TTL_MS && excess <= 0) continue;
+                candidates.add(key);
+                if (excess > 0) excess--;
+                if (candidates.size() >= LOCAL_API_SESSION_PRUNE_BATCH) break;
+            }
+        }
+        if (candidates.isEmpty()) return false;
+
+        boolean acquired = false;
+        try {
+            if (LOCAL_API_AGENT_WAITERS.get() > 0
+                    || LOCAL_API_COMPLETION_SLOTS.hasQueuedThreads()) return true;
+            acquired = LOCAL_API_COMPLETION_SLOTS.tryAcquire();
+            if (!acquired) return true;
+            int deleted = 0;
+            for (String key : candidates) {
+                if (LOCAL_API_AGENT_WAITERS.get() > 0
+                        || LOCAL_API_COMPLETION_SLOTS.hasQueuedThreads()) break;
+                String sid;
+                synchronized (LOCAL_API_SESSION_LOCK) {
+                    sid = LOCAL_API_SESSIONS.get(key);
+                }
+                if (!isUsableSessionId(sid) || !deleteThrowawaySession(cl, transport, sid)) {
+                    continue;
+                }
+                synchronized (LOCAL_API_SESSION_LOCK) {
+                    if (sid.equals(LOCAL_API_SESSIONS.get(key))) {
+                        LOCAL_API_SESSIONS.remove(key);
+                        LOCAL_API_SESSION_LAST_USED.remove(key);
+                        persistReusableApiSessionsLocked();
+                        deleted++;
+                    }
+                }
+            }
+            if (deleted > 0) {
+                log("[LOCAL_API] pruned reusable sessions=" + deleted);
+            }
+            return deleted >= LOCAL_API_SESSION_PRUNE_BATCH;
+        } catch (Throwable t) {
+            log("[LOCAL_API] reusable session prune failed: " + safeThrowableMessage(t));
+            return false;
+        } finally {
+            if (acquired) LOCAL_API_COMPLETION_SLOTS.release();
+        }
+    }
+
+    private Object newLocalApiNativeRequest(ClassLoader cl, String sid,
+                                             LocalApiGateway.CompletionRequest request,
+                                             String pow) throws Exception {
+        Class<?> ew0 = cl.loadClass("ew0");
+        Constructor<?> selected = null;
+        for (Constructor<?> ctor : ew0.getDeclaredConstructors()) {
+            Class<?>[] p = ctor.getParameterTypes();
+            if (p.length == 11 && p[0] == String.class && p[2] == String.class
+                    && p[4] == boolean.class && p[5] == boolean.class
+                    && p[7] == boolean.class && p[8] == String.class
+                    && p[9] == String.class && p[10] == int.class) {
+                selected = ctor;
+                break;
+            }
+        }
+        if (selected == null) {
+            throw new LocalApiGateway.GatewayException(503, "request_constructor_missing",
+                    "server_error", "DeepSeek request constructor is incompatible");
+        }
+        selected.setAccessible(true);
+        tlLocalApiRequest.set(Boolean.TRUE);
+        try {
+            // ew0: sid, parent, prompt, files, thinking, search, audio, preempt,
+            // model_type, PoW, Kotlin default mask. 512 keeps action unset; PoW lives in k.
+            return selected.newInstance(sid, null, request.prompt, new ArrayList(),
+                    request.reasoning, request.search, null, false,
+                    request.nativeModel, pow, 512);
+        } finally {
+            tlLocalApiRequest.remove();
+        }
+    }
+
+    private static Method findNativeCompletionMethod(Object transport, Object request) {
+        if (transport == null || request == null) return null;
+        for (Method method : transport.getClass().getDeclaredMethods()) {
+            Class<?>[] p = method.getParameterTypes();
+            if (method.getName().equals("b") && p.length == 2
+                    && p[0].isAssignableFrom(request.getClass())) return method;
+        }
+        return null;
+    }
+
+    private LocalApiGateway.CompletionResult collectLocalApiFlow(
+            final ClassLoader cl, Object flow, final LocalApiGateway.DeltaSink sink)
+            throws Exception {
+        Method collectMethod = null;
+        for (Class<?> itf : allInterfaces(flow.getClass())) {
+            Method candidate = null;
+            int matching = 0;
+            for (Method method : itf.getDeclaredMethods()) {
+                if (method.getParameterTypes().length == 2) {
+                    candidate = method;
+                    matching++;
+                }
+            }
+            if (matching == 1 && candidate != null
+                    && candidate.getParameterTypes()[0].isInterface()
+                    && candidate.getParameterTypes()[1].isInterface()) {
+                collectMethod = candidate;
+                break;
+            }
+        }
+        if (collectMethod == null) {
+            throw new LocalApiGateway.GatewayException(503, "flow_contract_missing",
+                    "server_error", "DeepSeek Flow contract was not found");
+        }
+
+        final Class<?> collectorClass = collectMethod.getParameterTypes()[0];
+        final Class<?> continuationClass = collectMethod.getParameterTypes()[1];
+        Class<?> contextClass = null;
+        for (Method method : continuationClass.getMethods()) {
+            if (method.getParameterTypes().length == 0
+                    && method.getReturnType().isInterface()) {
+                contextClass = method.getReturnType();
+                break;
+            }
+        }
+        final Object cancellationJob = contextClass == null
+                ? null : newLocalApiCancellationJob(cl, contextClass);
+        final Object context = contextClass == null ? null
+                : (cancellationJob == null
+                        ? emptyContextProxy(cl, contextClass) : cancellationJob);
+        final CountDownLatch completed = new CountDownLatch(1);
+        final StringBuilder text = new StringBuilder();
+        final StringBuilder reasoning = new StringBuilder();
+        final Throwable[] asyncFailure = {null};
+        final boolean[] cancelled = {false};
+        final boolean[] satisfied = {false};
+        final int[] eventCount = {0};
+        final NativeApiPatchDecoder patchDecoder = new NativeApiPatchDecoder();
+
+        InvocationHandler continuationHandler = new InvocationHandler() {
+            @Override public Object invoke(Object proxy, Method method, Object[] args) {
+                if (isObjectMethod(method)) return objectMethod(proxy, method, args);
+                if (method.getParameterTypes().length == 0) return context;
+                if (args != null && args.length > 0) {
+                    Throwable failure = coroutineFailure(args[0]);
+                    if (failure != null
+                            && !(failure instanceof LocalApiClientCancelled)
+                            && !(failure instanceof LocalApiGenerationSatisfied)) {
+                        asyncFailure[0] = failure;
+                    }
+                }
+                completed.countDown();
+                return null;
+            }
+        };
+        Object continuation = Proxy.newProxyInstance(cl,
+                new Class<?>[]{continuationClass}, continuationHandler);
+
+        InvocationHandler collectorHandler = new InvocationHandler() {
+            @Override public Object invoke(Object proxy, Method method, Object[] args)
+                    throws Throwable {
+                if (isObjectMethod(method)) return objectMethod(proxy, method, args);
+                if (method.getParameterTypes().length != 2) return ui8Unit(cl);
+                Object value = args == null || args.length == 0 ? null : args[0];
+                eventCount[0]++;
+                if (isSrvLog() && eventCount[0] <= 80) {
+                    srvLog("[LOCAL_API_EVENT] #" + eventCount[0] + " "
+                            + truncateForLog(summarizeFlowEvent(value), 1600));
+                }
+                ApiEvent event = decodeApiEvent(value, patchDecoder);
+                // Once a complete structured action is captured, keep draining the native Flow
+                // without accepting more model output. Throwing out of collect here returns the
+                // tool quickly but can leave DeepSeek generating server-side, causing the next
+                // Claude tool-result turn to hit parallel_chat_limit.
+                if (satisfied[0]) return ui8Unit(cl);
+                if (event.error != null) {
+                    asyncFailure[0] = new LocalApiUpstreamException(event.errorStatus,
+                            event.errorCode, event.errorType, event.error);
+                    throw asyncFailure[0];
+                }
+                if (event.reasoningSet != null) {
+                    String delta = applyApiSet(reasoning, event.reasoningSet);
+                    if (delta.length() > 0 && sink != null && !sink.onReasoning(delta)) {
+                        cancelled[0] = true;
+                        cancelLocalApiCancellationJob(cancellationJob);
+                        throw new LocalApiClientCancelled();
+                    }
+                }
+                if (event.reasoning.length() > 0) {
+                    reasoning.append(event.reasoning);
+                    if (sink != null && !sink.onReasoning(event.reasoning)) {
+                        cancelled[0] = true;
+                        cancelLocalApiCancellationJob(cancellationJob);
+                        throw new LocalApiClientCancelled();
+                    }
+                }
+                if (event.textSet != null) {
+                    String delta = applyApiSet(text, event.textSet);
+                    if (delta.length() > 0 && sink != null && !sink.onText(delta)) {
+                        cancelled[0] = true;
+                        cancelLocalApiCancellationJob(cancellationJob);
+                        throw new LocalApiClientCancelled();
+                    }
+                }
+                if (event.text.length() > 0) {
+                    text.append(event.text);
+                    if (sink != null && !sink.onText(event.text)) {
+                        cancelled[0] = true;
+                        cancelLocalApiCancellationJob(cancellationJob);
+                        throw new LocalApiClientCancelled();
+                    }
+                }
+                if (sink != null && sink.isCancelled()) {
+                    cancelled[0] = true;
+                    cancelLocalApiCancellationJob(cancellationJob);
+                    throw new LocalApiClientCancelled();
+                }
+                if (sink != null && sink.isSatisfied()) {
+                    satisfied[0] = true;
+                }
+                return ui8Unit(cl);
+            }
+        };
+        Object collector = Proxy.newProxyInstance(cl,
+                new Class<?>[]{collectorClass}, collectorHandler);
+
+        collectMethod.setAccessible(true);
+        Object immediate;
+        try {
+            immediate = collectMethod.invoke(flow, collector, continuation);
+            // A cold Kotlin Flow begins its network work when collect() is entered. Notify the
+            // wire adapter only after that boundary; the collector itself also notifies before a
+            // synchronous first event, and adapters are required to make this callback idempotent.
+            if (sink != null) sink.onUpstreamStarted();
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof LocalApiClientCancelled) cancelled[0] = true;
+            else if (cause instanceof LocalApiGenerationSatisfied) satisfied[0] = true;
+            else throw localApiStreamFailure(cause);
+            immediate = null;
+            completed.countDown();
+        }
+        Object suspended = null;
+        try {
+            Field field = cl.loadClass("w02").getDeclaredField("a");
+            field.setAccessible(true);
+            suspended = field.get(null);
+        } catch (Throwable ignored) {}
+        if (suspended == null || immediate != suspended) completed.countDown();
+
+        boolean finished = false;
+        long collectionBudget = Math.min(TimeUnit.SECONDS.toMillis(LOCAL_API_TIMEOUT_SECONDS),
+                Math.max(1000L, remainingLocalApiTimeMs() - 1000L));
+        long collectionEndsAt = System.currentTimeMillis() + collectionBudget;
+        while (!finished && System.currentTimeMillis() < collectionEndsAt) {
+            if (sink != null && sink.isCancelled()) {
+                cancelled[0] = true;
+                cancelLocalApiCancellationJob(cancellationJob);
+                throw new LocalApiGateway.GatewayException(499, "client_closed_request",
+                        "server_error", "Client disconnected while collecting DeepSeek output");
+            }
+            try {
+                finished = completed.await(Math.min(LOCAL_API_QUEUE_POLL_MS,
+                        Math.max(1L, collectionEndsAt - System.currentTimeMillis())),
+                        TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelLocalApiCancellationJob(cancellationJob);
+                throw new LocalApiGateway.GatewayException(503, "request_interrupted",
+                        "server_error", "Completion collection was interrupted");
+            }
+        }
+        if (!finished) {
+            cancelLocalApiCancellationJob(cancellationJob);
+            throw new LocalApiGateway.GatewayException(504, "upstream_timeout",
+                    "server_error", "DeepSeek did not finish before the local API deadline");
+        }
+        if (asyncFailure[0] != null && !cancelled[0] && !satisfied[0]) {
+            throw localApiStreamFailure(asyncFailure[0]);
+        }
+        if (!cancelled[0] && !satisfied[0]
+                && text.length() == 0 && reasoning.length() == 0) {
+            throw new LocalApiGateway.GatewayException(502, "empty_completion",
+                    "server_error", "DeepSeek completed without returning text");
+        }
+        log("[LOCAL_API] collected events=" + eventCount[0]
+                + " cancelled=" + cancelled[0] + " satisfied=" + satisfied[0]);
+        return new LocalApiGateway.CompletionResult(text.toString(), reasoning.toString(),
+                cancelled[0] ? "cancelled" : (satisfied[0] ? "tool_calls" : "stop"));
+    }
+
+    private static Throwable coroutineFailure(Object value) {
+        if (value instanceof Throwable) return (Throwable) value;
+        if (value != null && "fx6".equals(simpleName(value))) {
+            Object failure = fieldByName(value, "a");
+            if (failure instanceof Throwable) return (Throwable) failure;
+        }
+        return null;
+    }
+
+    private static ApiEvent decodeApiEvent(Object value,
+                                           NativeApiPatchDecoder patchDecoder) {
+        ApiEvent out = new ApiEvent();
+        try {
+            String valueType = simpleName(value);
+            if ("ws0".equals(valueType)) {
+                Object response = fieldByName(value, "a");
+                Object bodyValue = fieldByName(response, "j");
+                if (bodyValue instanceof String) {
+                    String body = ((String) bodyValue).trim();
+                    if (body.startsWith("{")) {
+                        JSONObject envelope = new JSONObject(body);
+                        int outerCode = envelope.optInt("code", 0);
+                        JSONObject data = envelope.optJSONObject("data");
+                        int businessCode = data == null ? 0 : data.optInt("biz_code", 0);
+                        String message = data == null ? envelope.optString("msg", "")
+                                : data.optString("biz_msg", envelope.optString("msg", ""));
+                        if (outerCode != 0 || businessCode != 0) {
+                            String lower = message.toLowerCase(Locale.US);
+                            if (lower.contains("invalid chat session")
+                                    || lower.contains("session not found")
+                                    || lower.contains("session deleted")) {
+                                out.errorStatus = 409;
+                                out.errorCode = "invalid_api_session";
+                                out.errorType = "server_error";
+                            } else if (isNativeBusyLimit(message)
+                                    || lower.contains("rate_limit")
+                                    || lower.contains("too frequent")
+                                    || message.contains("过于频繁")) {
+                                out.errorStatus = 429;
+                                out.errorCode = "upstream_rate_limit";
+                                out.errorType = "rate_limit_error";
+                            } else {
+                                out.errorStatus = 502;
+                                out.errorCode = "upstream_rejected";
+                                out.errorType = "server_error";
+                            }
+                            out.error = message.length() == 0 ? body : message;
+                            return out;
+                        }
+                    }
+                }
+                return out;
+            }
+            if (!"xs0".equals(valueType)) return out;
+            Object wrapper = fieldByName(value, "a");
+            if (wrapper == null) return out;
+            String eventName = String.valueOf(fieldByName(wrapper, "a"));
+            Object dataValue = fieldByName(wrapper, "b");
+            String data = dataValue instanceof String ? (String) dataValue : null;
+            String lowerEvent = eventName == null ? "" : eventName.toLowerCase(Locale.US);
+            if (lowerEvent.contains("error") || lowerEvent.contains("failed")) {
+                out.error = data == null ? "DeepSeek returned an upstream error" : data;
+                if (isNativeBusyLimit(out.error)) {
+                    out.errorStatus = 429;
+                    out.errorCode = "upstream_rate_limit";
+                    out.errorType = "rate_limit_error";
+                }
+                return out;
+            }
+            if (data == null || data.length() == 0) return out;
+            Object json;
+            String trimmed = data.trim();
+            if (trimmed.startsWith("[")) json = new JSONArray(trimmed);
+            else if (trimmed.startsWith("{")) json = new JSONObject(trimmed);
+            else return out;
+            if (lowerEvent.contains("hint") && json instanceof JSONObject) {
+                JSONObject hint = (JSONObject) json;
+                String hintType = hint.optString("type", "");
+                String finishReason = hint.optString("finish_reason", "");
+                if ("error".equalsIgnoreCase(hintType)
+                        || finishReason.toLowerCase(Locale.US).contains("rate_limit")) {
+                    String content = hint.optString("content", "DeepSeek rejected the request");
+                    if (isNativeBusyLimit(content + " " + finishReason)
+                            || finishReason.toLowerCase(Locale.US).contains("rate_limit")
+                            || content.contains("过于频繁")) {
+                        out.errorStatus = 429;
+                        out.errorCode = "upstream_rate_limit";
+                        out.errorType = "rate_limit_error";
+                    } else {
+                        out.errorStatus = 502;
+                        out.errorCode = "upstream_rejected";
+                        out.errorType = "server_error";
+                    }
+                    out.error = content + (finishReason.length() == 0
+                            ? "" : " (" + finishReason + ")");
+                    return out;
+                }
+            }
+            NativeApiPatchDecoder.Delta delta = (patchDecoder == null
+                    ? new NativeApiPatchDecoder() : patchDecoder).decode(json);
+            out.text = delta.text;
+            out.reasoning = delta.reasoning;
+            out.textSet = delta.textSet;
+            out.reasoningSet = delta.reasoningSet;
+        } catch (Throwable ignored) {}
+        return out;
+    }
+
+    private static boolean isNativeBusyLimit(String value) {
+        if (value == null) return false;
+        String lower = value.toLowerCase(Locale.US);
+        return lower.contains("parallel_chat_limit")
+                || lower.contains("parallel chat limit")
+                || lower.contains("message is being generated")
+                || value.contains("有消息正在生成")
+                || value.contains("消息正在生成");
+    }
+
+    private static String safeThrowableMessage(Throwable throwable) {
+        if (throwable == null) return "unknown error";
+        Throwable value = deepestCause(throwable);
+        String message = value.getMessage();
+        String result = value.getClass().getSimpleName()
+                + (message == null || message.length() == 0 ? "" : ": " + message);
+        return result.length() > 500 ? result.substring(0, 500) : result;
+    }
+
+    private static Throwable deepestCause(Throwable throwable) {
+        if (throwable == null) return null;
+        Throwable value = throwable;
+        HashSet<Throwable> seen = new HashSet<>();
+        while (value.getCause() != null && value.getCause() != value && seen.add(value)) {
+            value = value.getCause();
+        }
+        return value;
+    }
+
+    private static final class ApiEvent {
+        String text = "";
+        String reasoning = "";
+        String textSet;
+        String reasoningSet;
+        String error;
+        int errorStatus = 502;
+        String errorCode = "upstream_stream_failed";
+        String errorType = "server_error";
+    }
+
+    private static LocalApiGateway.GatewayException localApiStreamFailure(Throwable failure) {
+        Throwable cursor = failure;
+        HashSet<Throwable> seen = new HashSet<>();
+        while (cursor != null && seen.add(cursor)) {
+            if (cursor instanceof LocalApiUpstreamException) {
+                LocalApiUpstreamException upstream = (LocalApiUpstreamException) cursor;
+                return new LocalApiGateway.GatewayException(upstream.status, upstream.code,
+                        upstream.type, "DeepSeek stream failed: " + upstream.getMessage());
+            }
+            cursor = cursor.getCause();
+        }
+        return new LocalApiGateway.GatewayException(502, "upstream_stream_failed",
+                "server_error", "DeepSeek stream failed: " + safeThrowableMessage(failure));
+    }
+
+    private static final class LocalApiUpstreamException extends RuntimeException {
+        final int status;
+        final String code;
+        final String type;
+
+        LocalApiUpstreamException(int status, String code, String type, String message) {
+            super(message);
+            this.status = status;
+            this.code = code;
+            this.type = type;
+        }
+    }
+
+    private static String applyApiSet(StringBuilder current, String replacement) {
+        if (replacement == null) return "";
+        String before = current.toString();
+        if (replacement.equals(before)) return "";
+        if (replacement.startsWith(before)) {
+            String delta = replacement.substring(before.length());
+            current.append(delta);
+            return delta;
+        }
+        current.setLength(0);
+        current.append(replacement);
+        // A divergent SET is unusual but represents the authoritative upstream value. Streaming
+        // cannot retract bytes already delivered, so emit the replacement as the safest signal.
+        return replacement;
+    }
+
+    private static final class LocalApiClientCancelled extends RuntimeException {
+        LocalApiClientCancelled() { super("local API client disconnected"); }
+    }
+
+    private static final class LocalApiGenerationSatisfied extends RuntimeException {
+        LocalApiGenerationSatisfied() { super("complete local tool action captured"); }
+    }
+
     private String createThrowawaySession(ClassLoader cl, Object r92) {
         try {
             java.lang.reflect.Field bf = r92.getClass().getDeclaredField("b"); // i91
@@ -3407,11 +7054,27 @@ public class Main extends XposedModule {
             for (Method m : i91.getClass().getDeclaredMethods()) {
                 if (m.getName().equals("a") && m.getParameterTypes().length == 1) { createM = m; break; }
             }
-            if (createM == null) { extLog("[RELAY] i91.a(create) 未找到"); return null; }
+            if (createM == null) {
+                localApiLastSessionError = "i91.a(create) method missing";
+                extLog("[RELAY] i91.a(create) 未找到");
+                return null;
+            }
             Object res = driveSuspend(cl, createM, i91, new Object[0]);
             String body = String.valueOf(fieldByName(res, "j"));
-            return extractSessionId(body);
-        } catch (Throwable t) { extLog("[RELAY] createThrowawaySession err: " + t); return null; }
+            String sid = extractSessionId(body);
+            if (sid == null) {
+                localApiLastSessionError = "create response contained no session id: "
+                        + truncateForLog(body, 500);
+            } else {
+                localApiLastSessionError = "ok";
+            }
+            return sid;
+        } catch (Throwable t) {
+            localApiLastSessionError = safeThrowableMessage(t);
+            extLog("[RELAY] createThrowawaySession err: " + localApiLastSessionError
+                    + "\n" + stackToString(deepestCause(t)));
+            return null;
+        }
     }
 
     private static String extractSessionId(String body) {
@@ -3438,8 +7101,14 @@ public class Main extends XposedModule {
                 if (m.getName().equals("c") && m.getParameterTypes().length == 2) { delM = m; break; }
             }
             if (delM == null) { extLog("[RELAY] i91.c(delete) 未找到"); return false; }
-            driveSuspend(cl, delM, i91, new Object[]{ jb1 });
-            return true;
+            Object response = driveSuspend(cl, delM, i91, new Object[]{ jb1 });
+            Object bodyValue = fieldByName(response, "j");
+            if (!(bodyValue instanceof String)) return response != null;
+            JSONObject envelope = new JSONObject((String) bodyValue);
+            if (envelope.optInt("code", Integer.MIN_VALUE) != 0) return false;
+            JSONObject data = envelope.optJSONObject("data");
+            return data == null || !data.has("biz_code") || data.optInt(
+                    "biz_code", Integer.MIN_VALUE) == 0;
         } catch (Throwable t) { extLog("[RELAY] deleteThrowawaySession err: " + t); return false; }
     }
 
@@ -3692,6 +7361,33 @@ public class Main extends XposedModule {
             }
         };
         return Proxy.newProxyInstance(cl, new Class<?>[]{ccCls}, h);
+    }
+
+    /** Creates the host's real coroutine Job so disconnects cancel the upstream Flow. */
+    private static Object newLocalApiCancellationJob(ClassLoader cl, Class<?> contextClass) {
+        try {
+            Class<?> jobClass = cl.loadClass("c74");
+            Constructor<?> constructor = jobClass.getDeclaredConstructor(boolean.class);
+            constructor.setAccessible(true);
+            Object job = constructor.newInstance(true);
+            return contextClass.isInstance(job) ? job : null;
+        } catch (Throwable ignored) { return null; }
+    }
+
+    private static void cancelLocalApiCancellationJob(Object job) {
+        if (job == null) return;
+        for (Method method : job.getClass().getMethods()) {
+            Class<?>[] parameters = method.getParameterTypes();
+            if (parameters.length != 1
+                    || !java.util.concurrent.CancellationException.class
+                            .isAssignableFrom(parameters[0])) continue;
+            try {
+                method.setAccessible(true);
+                method.invoke(job, new java.util.concurrent.CancellationException(
+                        "local API client disconnected"));
+                return;
+            } catch (Throwable ignored) {}
+        }
     }
 
     private static boolean isObjectMethod(Method m) {

@@ -73,7 +73,7 @@ A response with reasoning uses `thinking_enabled=true` and a numeric ID on the
 
 ## Fix
 
-All four complete editors now use the same structured transform,
+Both stable 1.7.1 interfaces now use the same canonical structured transform,
 `upsertFragmentContent()`:
 
 1. repair any old `THINK` object whose ID is missing or nonnumeric;
@@ -101,9 +101,8 @@ THINK ID and then modifies only the matching reasoning object. The existing
 
 ## Automatic Migration
 
-At module startup, before the host opens a conversation, each stable/test and
-modern/traditional complete build scans all local account databases and session
-message tables.
+At module startup, before the host opens a conversation, each stable 1.7.1
+interface scans all local account databases and session message tables.
 
 The migration:
 
@@ -151,14 +150,9 @@ PASS: THINK content/id/duration transforms preserve the response
 
 ## Scope and Recovery Limit
 
-The writer and migration are present in:
-
-- `module/` (stable libxposed API 102);
-- `module-inject/` (test libxposed API 102);
-- `module-legacy/` (stable traditional Xposed);
-- `module-inject-legacy/` (FPA/test traditional Xposed).
-
-`module-mtest/` is only an API-load probe and does not contain the editor.
+The writer and migration are present in both stable 1.7.1 APKs because modern
+and traditional interface builds compile the same canonical feature core. The
+former test editions and load probe are not 1.7.1 release targets.
 
 The migration can restore visibility when the original `RESPONSE` still exists
 in the malformed JSON row. It cannot reconstruct response text that a later

@@ -11,10 +11,12 @@ mkdir -p $OUT/classes $OUT/dex
 
 echo "[0/6] generate BuildInfo.java (api version + build date)"
 API_VER=$(grep -oE 'targetApiVersion=[0-9]+' xposed/module.prop | cut -d= -f2)
+MODULE_VER=$(grep -oE 'android:versionName="[^"]+"' AndroidManifest.xml | head -n1 | cut -d'"' -f2)
 cat > src/com/dsmod/probe/BuildInfo.java <<EOF
 package com.dsmod.probe;
 public final class BuildInfo {
     public static final String API_VERSION = "${API_VER:-102}";
+    public static final String MODULE_VERSION = "${MODULE_VER:-unknown}";
     public static final String BUILD_DATE = "$(date '+%Y-%m-%d %H:%M')";
     private BuildInfo() {}
 }

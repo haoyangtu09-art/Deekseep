@@ -1,4 +1,4 @@
-name: Build all variants
+name: Build stable releases
 
 on:
   push:
@@ -30,13 +30,13 @@ jobs:
       - name: Install Android platform and build tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Build and test all variants
+      - name: Build and test stable releases
         run: bash scripts/build-all.sh
 
       - name: Upload APKs and checksums
         uses: actions/upload-artifact@v7
         with:
-          name: deekseep-all-variants
+          name: deekseep-stable-v1.7.1
           path: dist/
           if-no-files-found: error
           retention-days: 14

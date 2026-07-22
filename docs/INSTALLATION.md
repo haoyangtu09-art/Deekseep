@@ -17,19 +17,18 @@ framework installers.
 For current LSPosed, install:
 
 ```text
-deekseep-stable-api102-v1.7.apk
+deekseep-stable-api102-v1.7.1.apk
 ```
 
 For FPA or an older framework that cannot load modern modules, install:
 
 ```text
-deekseep-stable-legacy-v1.7.apk
+deekseep-stable-legacy-v1.7.1.apk
 ```
 
-Use a test build only when you explicitly need Compose injection, the host
-long-press edit experiment, or the FPA/legacy expert relay track. The FPA test
-APK is `deekseep-test-legacy-v1.7.apk` on the same v1.7 release page. Use the
-load probe only to diagnose modern API loading.
+The former modern and legacy test editions are discontinued in 1.7.1 and are
+not release downloads. Maintained high-risk functions now live behind the
+dedicated **Experimental Features** page in both stable builds.
 
 See [Build Variants](VARIANTS.md) for the full comparison.
 
@@ -39,21 +38,24 @@ See [Build Variants](VARIANTS.md) for the full comparison.
    `SHA256SUMS.txt`.
 2. Install the APK.
 3. Enable Deekseep in LSPosed.
-4. Select `com.deepseek.chat` and `com.dsmod.probe` in the module scope.
+4. Select `com.deepseek.chat` in the module scope. Do not select the module app
+   itself for activation detection; modern libxposed does not self-hook module
+   applications.
 5. Force-stop DeepSeek.
 6. Start DeepSeek and accept the first-run disclosure.
 7. Open DeepSeek Settings. The Deekseep entry should appear on the settings
    screen.
 
-The module's own launcher should report activation after the framework has
-injected the matching package process.
+The launcher reports **Enabled** when the official Xposed service connects and
+**Active** after the DeepSeek target process sends its UID-validated heartbeat.
 
 ## Install with FPA or Traditional Xposed
 
 1. Download the matching legacy asset.
 2. Follow the injector's normal patch/install process for a traditional Xposed
    module.
-3. Scope the module to DeepSeek and, where supported, to the module package.
+3. Scope the module to DeepSeek. A legacy injector may expose its own activation
+   convention, but the stable modern self-scope rule does not apply to it.
 4. Restart the target process.
 5. Open the module launcher once so its activation handshake can complete.
 6. Open DeepSeek Settings and verify the Deekseep entry.
@@ -73,24 +75,25 @@ signature if one is installed over the other.
 4. Enable only the new module and reselect scope.
 5. Force-stop and restart DeepSeek.
 
-The same rule applies to the two `com.dsmod.inject` test builds.
-
 ## First Safe Configuration
 
 1. Leave response and protocol diagnostics disabled.
 2. Use **Back up chat database now** before opening the editor.
 3. Import a small test prompt.
 4. Enable prompt injection and test it in a disposable conversation.
-5. Enable response preservation, expert mode, or relay features separately so a
+5. Enable response preservation or one experimental feature at a time so a
    failure can be attributed to one feature.
+6. Leave the DeepSeek Local API disabled unless a trusted local client needs it.
+   When enabled, copy the Key only from its control page and treat connection
+   files and API logs as credentials. Its foreground keeper intentionally increases
+   background battery use. See [DeepSeek Local API](LOCAL_DEEPSEEK_API.md).
 
-## Upgrading from the Broken Reasoning Writer
+## Upgrading from 1.7 or an Older Reasoning Writer
 
-Version 1.7 r2 does this in all four complete variants: stable/test API 102 and
-stable/FPA-test traditional Xposed. Each scans local assistant rows for a
-`THINK` fragment without a numeric `id`.
+Both 1.7.1 stable builds scan local assistant rows for a `THINK` fragment
+without a numeric `id` and repair it idempotently.
 
-1. Install the v1.7 r2 build matching your framework.
+1. Install the 1.7.1 stable build matching your framework.
 2. Confirm it is the only enabled Deekseep hook.
 3. Force-stop and restart DeepSeek.
 4. Open the affected conversation.
@@ -99,10 +102,9 @@ The migration preserves the original response and gives the malformed reasoning
 fragment a unique ID. A diagnostic line reports
 `repairMalformedThinkFragments fixed=N`. A later launch should report zero.
 
-The r2 APKs have higher Android version codes than the first v1.7 files, so an
-in-channel update with the same signing key can install over them. Switching
-between modern and traditional interfaces still requires uninstalling because
-those tracks use different keys.
+The 1.7.1 APKs have higher Android version codes for their stable interface
+tracks. Switching between modern and traditional interfaces still requires an
+uninstall when those builds use different keys.
 
 ## Rollback
 

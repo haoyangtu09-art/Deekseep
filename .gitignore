@@ -36,3 +36,7 @@ FIX_chat_editor_add_thinking.md
 .vscode/
 *.swp
 .DS_Store
+
+# Local, Termux-compatible Claude Code runtime used by scripts/claude-deekseep
+.claude-code-termux/
+scripts/__pycache__/
