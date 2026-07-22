@@ -32,8 +32,8 @@ All notable public releases are documented here.
 - Simplified the module launcher status page: it now shows the installed
   DeepSeek version, module version, and module build time, and no longer shows
   the device SELinux state.
-- Kept this port on the `google-play` branch as an experimental, exact-build
-  target; the normal `v1.7.1` release assets remain mainland-China builds.
+- Kept this port on the `google-play` branch as an exact-build target and
+  distributed its labelled APK alongside the mainland builds in `v1.7.2`.
 
 ## 1.7.1 - 2026-07-22
 

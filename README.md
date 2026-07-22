@@ -41,8 +41,8 @@ the traditional-Xposed directories remain mainland reference code.
 
 The current branch build is **`1.7.2`**, using the modern libxposed API 102
 interface under [`module/`](module/). Download the explicitly labelled Google
-Play asset from the `v1.7.2-google-play` prerelease; the normal `v1.7.1` assets
-use the separate mainland symbol map and are not interchangeable with this build.
+Play asset from the unified `v1.7.2` release; its mainland assets use a separate
+symbol map and are not interchangeable with this build.
 
 The Google Play port retains the gated **Experimental Features** page, its
 five-second first-entry disclosure, and separate help. Modern and legacy APKs
@@ -116,7 +116,7 @@ permanent guarantee.
 1. Confirm that DeepSeek is the Google Play 2.2.2 build (`versionCode 236`).
 2. Back up the DeepSeek chat database.
 3. Build `module/` from this branch, or download the explicitly labelled Google
-   Play 2.2.2 asset from `v1.7.2-google-play`. Do not use a mainland APK.
+   Play 2.2.2 asset from `v1.7.2`. Do not use a mainland APK.
 4. Install it and enable it in the matching Xposed framework.
 5. Select `com.deepseek.chat` in scope. Modern libxposed does not require or
    support self-hooking the module application.

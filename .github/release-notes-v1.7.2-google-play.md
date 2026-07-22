@@ -1,6 +1,6 @@
 # Deekseep 1.7.2 — Google Play 2.2.2
 
-This prerelease is the Google Play port of Deekseep for the exact DeepSeek
+This build is the Google Play port of Deekseep for the exact DeepSeek
 Android **2.2.2 (`versionCode 236`)** build. It uses the modern libxposed API
 102 interface and is not interchangeable with the mainland `versionCode 233`
 packages.
