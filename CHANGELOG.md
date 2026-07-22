@@ -20,19 +20,10 @@ All notable public releases are documented here.
 
 ### Fixes and features
 
-- Upgraded the stable API 102 development head to **1.7-r22-api102** and fixed
-  the remaining account-import `code=40002` failure. The validator now follows
-  DeepSeek 2.2.2's actual Ktor bearer-auth chain (`Authorization: Bearer`) rather
-  than the unrelated telemetry `x-auth-token`, and carries the host device ID and
-  timezone headers. A privacy-safe live check confirmed `code=0`, `biz_code=0`,
-  and matching account IDs for both locally saved accounts before this change was
-  applied to the importer.
-- Upgraded the stable API 102 development head to **1.7-r21-api102** and fixed
-  account imports that were deterministically rejected with HTTP 429. Validation
-  now uses the installed DeepSeek app's real User-Agent shape, spaces batch
-  requests, honors a bounded `Retry-After` retry, parses each bounded response
-  exactly once, and still rejects expired tokens, mismatched account IDs, or any
-  incomplete business-layer success without writing candidate credentials.
+- Added multi-account management with saved account slots, explicit
+  add/switch/remove actions, selectable JSON import/export, and validation before
+  candidate credentials are stored. Importing adds accounts to the list without
+  silently changing the currently active account.
 - Upgraded the stable API 102 development head to **1.7-r20-api102** and hardened
   OpenAI Responses for Codex CLI 0.144.5. The gateway now scopes native sessions
   from Codex thread/session metadata, emits `phase`, `end_turn`, and custom-tool

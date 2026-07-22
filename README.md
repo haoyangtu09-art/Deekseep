@@ -6,18 +6,18 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > [!IMPORTANT]
-> **兼容性限制 / Compatibility limit**
+> **请选择匹配的渠道构建 / Choose the matching channel build**
 >
-> Deekseep 目前仅适配 **DeepSeek Android 中国大陆渠道版**，**不适配
-> Google Play / 国际版**。请勿在 Google Play 版上安装或启用本模块；其内部实现
-> 与混淆符号可能不同，相关 Hook 和数据功能无法保证工作。
+> 国内版与 Google Play 版使用不同的混淆符号映射，安装包不能混用。
+> `main` 稳定构建匹配国内 DeepSeek 2.2.2 (`versionCode 233`)；
+> `google-play` 分支和对应的预发布构建匹配 Google Play DeepSeek 2.2.2
+> (`versionCode 236`)。
 >
-> Deekseep currently supports only the **mainland-China distribution** of the
-> DeepSeek Android app. The **Google Play / international build is not
-> supported**. Do not install or enable this module for the Google Play build.
+> Mainland and Google Play packages use different obfuscation maps and are not
+> interchangeable. The `main` stable build targets DeepSeek 2.2.2 code 233;
+> the `google-play` branch and its prerelease target Play build code 236.
 
-Deekseep is an unofficial Xposed module toolkit for the mainland-China
-distribution of the DeepSeek Android client.
+Deekseep is an unofficial Xposed module toolkit for the DeepSeek Android client.
 It provides a stable native settings entry, prompt injection, response-preservation
 hooks, local conversation tools, an advanced chat editor, database backup, and
 experimental expert-mode image relay. Both stable 1.7.1 builds also provide a
@@ -45,6 +45,7 @@ The recommended build for a current LSPosed installation is
 |---|---|---|---|---|
 | [deekseep-stable-api102-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-api102-v1.7.1.apk) | Stable | libxposed API 102 | `com.dsmod.probe` | Current LSPosed; recommended |
 | [deekseep-stable-legacy-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-legacy-v1.7.1.apk) | Stable compatibility | Traditional Xposed API 82+ | `com.dsmod.probe` | Compatible FPA and older LSPosed environments |
+| [deekseep-google-play-2.2.2-v1.7.2.apk](https://github.com/haoyangtu09-art/Deekseep/releases/download/v1.7.2-google-play/deekseep-google-play-2.2.2-v1.7.2.apk) | Google Play prerelease | libxposed API 102 | `com.dsmod.probe` | Google Play 2.2.2 (`versionCode 236`) only |
 
 Modern and legacy builds use the same Android package ID but
 different signing keys. They cannot be installed over one another. Uninstall the
@@ -52,10 +53,11 @@ old interface variant before switching.
 
 Checksums are published with every release in `SHA256SUMS.txt`.
 
-The current stable release is **1.7.1**. The former test editions are
-discontinued and no longer published. Maintained high-risk options are now
-collected under a gated **Experimental Features** page with a five-second
-first-entry disclosure and separate help.
+The mainland stable release is **1.7.1**; the exact-build Google Play port is
+published separately as **1.7.2**. The former test editions are discontinued
+and no longer published. Maintained high-risk options are collected under a
+gated **Experimental Features** page with a five-second first-entry disclosure
+and separate help.
 
 ## Main Features
 
@@ -97,8 +99,9 @@ See the [stable interface guide](docs/VARIANTS.md) and dedicated
 
 ## Compatibility
 
-- Supported DeepSeek channel: official mainland-China Android distribution only.
-- Unsupported DeepSeek channel: Google Play / international Android build.
+- Mainland stable target: DeepSeek Android 2.2.2 (`versionCode 233`) on `main`.
+- Google Play target: DeepSeek Android 2.2.2 (`versionCode 236`) on the
+  `google-play` branch and `v1.7.2-google-play` prerelease.
 - Module minimum Android version: Android 7.0 / API 24.
 - Modern interface: libxposed API 102, metadata under `META-INF/xposed/`.
 - Legacy interface: traditional Xposed API 82+, entry under `assets/xposed_init`.
@@ -112,8 +115,8 @@ permanent guarantee.
 
 ## Quick Installation
 
-1. Confirm that DeepSeek is the mainland-China Android build, not the Google
-   Play / international build.
+1. Check the installed DeepSeek `versionCode` and select the matching mainland
+   or Google Play build from the table above.
 2. Back up the DeepSeek chat database.
 3. Download exactly one release variant from the table above.
 4. Install it and enable it in the matching Xposed framework.

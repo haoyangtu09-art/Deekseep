@@ -13,13 +13,6 @@ The two APKs share the package ID `com.dsmod.probe` and may use different
 signing keys. Disable and uninstall one before switching interfaces. Enable
 only one Deekseep implementation for DeepSeek.
 
-## Compatibility Notice
-
-Deekseep 1.7.1 currently supports only the **mainland-China distribution of
-the DeepSeek Android app**. The **Google Play / international build is not
-supported**. Do not install or enable this module for the Google Play build;
-its internal implementation and obfuscated symbols may differ.
-
 ## Test Editions Discontinued
 
 The former API 102 and traditional-Xposed test editions are discontinued.
@@ -64,10 +57,9 @@ Agent sandbox/approval controls.
 
 ## Accounts, Login and Data Tools
 
-- Fixed account import validation failures: requests now use DeepSeek's actual
-  bearer authorization, device/timezone headers, app User-Agent shape, bounded
-  response parsing, paced batches and one bounded 429 retry. Credentials are
-  written only after full business-layer success and account-ID matching.
+- Added multi-account management with saved account slots, explicit add,
+  switch and remove actions, selectable JSON import/export, and validation
+  before candidate credentials are stored.
 - Restored optional native Google login on mainland login lists and native
   WeChat/SMS entries on overseas lists without replacing the host auth flows.
 - Refreshed cross-account chat editing, search, native navigation, Markdown
