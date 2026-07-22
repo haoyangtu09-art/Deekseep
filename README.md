@@ -39,6 +39,15 @@ This recommended APK is for the **mainland China DeepSeek 2.2.2 build (`233`) on
 
 The screenshot shows the English in-app settings for prompt injection, response-replacement prevention, chat multi-select, and native sign-in entry restoration.
 
+<details>
+<summary>More project screenshots</summary>
+
+| Data tools, language, and module information | Experimental features and risk notice |
+|---|---|
+| <img src="docs/images/data-tools-preview.jpg" alt="Deekseep LSPosed data tools and module information" width="320"> | <img src="docs/images/experimental-features-preview.jpg" alt="Deekseep LSPosed Experimental Features page" width="320"> |
+
+</details>
+
 ## What is Deekseep LSPosed?
 
 Deekseep LSPosed runs inside the official DeepSeek Android app through a compatible LSPosed/Xposed environment. It adds local conversation and account tools, prompt and interface controls, image workflows, and an optional developer-facing API gateway.

@@ -39,6 +39,15 @@
 
 截图展示了英文版模块设置中的提示词注入、响应替换保护、聊天多选和原生登录入口恢复开关。
 
+<details>
+<summary>查看更多项目截图</summary>
+
+| 数据工具、语言与模块信息 | 实验性功能及风险提示 |
+|---|---|
+| <img src="docs/images/data-tools-preview.jpg" alt="Deekseep LSPosed 数据工具与模块信息" width="320"> | <img src="docs/images/experimental-features-preview.jpg" alt="Deekseep LSPosed 实验性功能页面" width="320"> |
+
+</details>
+
 ## 项目介绍
 
 Deekseep LSPosed 通过兼容的 LSPosed/Xposed 环境运行在官方 DeepSeek Android App 进程中，为本地会话、账号、提示词、界面、图片流程和开发者 API 增加可选工具。

@@ -12,7 +12,7 @@ All notable public releases are documented here.
   version, channel, framework, scope, and APK guidance.
 - Added structured GitHub Bug, compatibility, and feature Issue Forms plus a
   detailed Pull Request template.
-- Added a real in-app project screenshot, a 1280 × 640 social preview SVG, and
+- Added real in-app project screenshots, a 1280 × 640 social preview SVG, and
   a manual GitHub repository setup guide.
 
 ## 1.7.2 - 2026-07-22
