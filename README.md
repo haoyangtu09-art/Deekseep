@@ -18,23 +18,23 @@ English | [简体中文](README_CN.md)
 > [!IMPORTANT]
 > Deekseep LSPosed 1.7.2 is build-specific. Mainland China and Google Play packages use different obfuscation maps and are not interchangeable.
 
-- **Mainland China official build:** DeepSeek 2.2.2 (`versionCode 233`) — supported by the stable API 102 and Legacy APKs.
-- **Google Play build:** DeepSeek 2.2.2 (`versionCode 236`) — supported only by the separately labelled Google Play API 102 APK.
-- **Android:** 7.0 or newer (API 24+).
-- **Recommended framework:** current LSPosed with libxposed API 102.
-- **Traditional compatibility:** Xposed API 82+ through the mainland Legacy APK.
-- **Module scope:** `com.deepseek.chat` only.
+- Mainland China official build: DeepSeek 2.2.2 (`versionCode 233`) — supported by the stable API 102 and Legacy APKs.
+- Google Play build: DeepSeek 2.2.2 (`versionCode 236`) — supported only by the separately labelled Google Play API 102 APK.
+- Android: 7.0 or newer (API 24+).
+- Recommended framework: current LSPosed with libxposed API 102.
+- Traditional compatibility: Xposed API 82+ through the mainland Legacy APK.
+- Module scope: `com.deepseek.chat` only.
 
 ## Download
 
 ### [Download Deekseep LSPosed 1.7.2 — recommended stable API 102](https://github.com/haoyangtu09-art/Deekseep/releases/download/v1.7.2/deekseep-stable-api102-v1.7.2.apk)
 
-This recommended APK is for the **mainland China DeepSeek 2.2.2 build (`233`) on current LSPosed**. Google Play users must download `deekseep-google-play-2.2.2-v1.7.2.apk` from the [1.7.2 release](https://github.com/haoyangtu09-art/Deekseep/releases/tag/v1.7.2). Verify the DeepSeek `versionCode` before installing.
+This recommended APK is for the mainland China DeepSeek 2.2.2 build (`233`) on current LSPosed. Google Play users must download `deekseep-google-play-2.2.2-v1.7.2.apk` from the [1.7.2 release](https://github.com/haoyangtu09-art/Deekseep/releases/tag/v1.7.2). Verify the DeepSeek `versionCode` before installing.
 
 ## Screenshot
 
 <p align="center">
-  <img src="docs/images/project-preview.jpg" alt="Deekseep LSPosed project preview" width="360">
+  <img src="docs/images/Screenshot_2026-07-22-22-49-55-25_7614e48627b7380b17b386d382d1b2ef.jpg" alt="Deekseep LSPosed project preview" width="360">
 </p>
 
 The screenshot shows the English in-app settings for prompt injection, response-replacement prevention, chat multi-select, and native sign-in entry restoration.
@@ -76,7 +76,7 @@ This is an independent third-party project. It is not part of, affiliated with, 
 ### Developer and API tools
 
 - Run an opt-in, Gateway-Key-protected local/trusted-LAN service that exposes OpenAI Chat Completions/Responses or Anthropic Messages-compatible endpoints through DeepSeek's native transport.
-- Use streaming, tool-result continuation, Codex and Claude Code tool loops, deep-thinking parameters, native web search, and live request diagnostics. The gateway is under the gated **Experimental Features** page and is disabled by default.
+- Use streaming, tool-result continuation, Codex and Claude Code tool loops, deep-thinking parameters, native web search, and live request diagnostics. The gateway is under the gated Experimental Features page and is disabled by default.
 
 ### Interface and compatibility tools
 
@@ -104,7 +104,7 @@ The repository does not distribute the official DeepSeek APK, a rooting solution
 4. Install the module APK and enable it in the LSPosed/Xposed manager.
 5. Select only `com.deepseek.chat` as the module scope. Do not add the modern module application itself to scope.
 6. Force-stop DeepSeek, then open it again. A full device reboot is normally unnecessary; use one only if your framework does not reload the module after restarting the target app.
-7. Accept the first-run risk disclosure, open DeepSeek Settings, and select the injected **Deekseep** entry for Deekseep LSPosed.
+7. Accept the first-run risk disclosure, open DeepSeek Settings, and select the injected Deekseep entry for Deekseep LSPosed.
 
 Modern and Legacy APKs share the package ID `com.dsmod.probe` but use different development signing keys. When switching interfaces, disable and uninstall the old module APK before installing the other one; this does not uninstall DeepSeek. See the full [installation guide](docs/INSTALLATION.md).
 
@@ -138,16 +138,16 @@ The historical APKs remain on the [1.7.0 release](https://github.com/haoyangtu09
 
 ## Troubleshooting
 
-- **The Deekseep LSPosed entry does not appear:** verify the exact app channel/version, install the matching APK, enable only one module variant, scope `com.deepseek.chat`, and fully force-stop DeepSeek before reopening Settings.
-- **The module is enabled but hooks do not work:** check the launcher activation state and framework interface. For modern LSPosed, use API 102 and do not self-scope the module app. Disable other modules that may hook the same screen or request path.
-- **The DeepSeek version is incompatible:** disable Deekseep LSPosed and confirm the unmodified app works. Use only documented version codes; an app update may require a new symbol mapping.
-- **The LSPosed API is incompatible:** use the API 102 APK on current LSPosed. Use the mainland Legacy APK only for traditional Xposed API 82+/compatible FPA, and do not install both.
-- **The Google Play build does not work:** confirm DeepSeek is exactly 2.2.2 (`236`) and that the APK filename contains `google-play-2.2.2`. The mainland `233` packages cannot be substituted.
-- **Features fail after a DeepSeek update:** disable the module, restart DeepSeek, and report the new channel, `versionName`, and `versionCode`. Future app versions are not automatically supported.
-- **Multi-account tools fail:** back up current account data, test one add/import operation at a time, and retain the original active account until validation succeeds. Never post exported account JSON publicly.
-- **Image tools fail:** verify the system photo picker can read the file and test one image first. Expert image relay is experimental and can fail because of server permissions, model routing, proof-of-work, or changed host internals.
-- **Collecting logs:** reproduce once, then copy only a short excerpt around the first error from the module's diagnostics. Remove tokens, cookies, authorization data, account information, email addresses, phone numbers, device identifiers, private server addresses, prompts, responses, file URLs, and any other private data.
-- **Opening an issue:** search existing reports, then use the [Bug report](https://github.com/haoyangtu09-art/Deekseep/issues/new?template=bug_report.yml) or [Compatibility report](https://github.com/haoyangtu09-art/Deekseep/issues/new?template=compatibility_report.yml) form with exact versions and a minimal redacted log.
+- The Deekseep LSPosed entry does not appear: verify the exact app channel/version, install the matching APK, enable only one module variant, scope `com.deepseek.chat`, and fully force-stop DeepSeek before reopening Settings.
+- The module is enabled but hooks do not work: check the launcher activation state and framework interface. For modern LSPosed, use API 102 and do not self-scope the module app. Disable other modules that may hook the same screen or request path.
+- The DeepSeek version is incompatible: disable Deekseep LSPosed and confirm the unmodified app works. Use only documented version codes; an app update may require a new symbol mapping.
+- The LSPosed API is incompatible: use the API 102 APK on current LSPosed. Use the mainland Legacy APK only for traditional Xposed API 82+/compatible FPA, and do not install both.
+- The Google Play build does not work: confirm DeepSeek is exactly 2.2.2 (`236`) and that the APK filename contains `google-play-2.2.2`. The mainland `233` packages cannot be substituted.
+- Features fail after a DeepSeek update: disable the module, restart DeepSeek, and report the new channel, `versionName`, and `versionCode`. Future app versions are not automatically supported.
+- Multi-account tools fail: back up current account data, test one add/import operation at a time, and retain the original active account until validation succeeds. Never post exported account JSON publicly.
+- Image tools fail: verify the system photo picker can read the file and test one image first. Expert image relay is experimental and can fail because of server permissions, model routing, proof-of-work, or changed host internals.
+- Collecting logs: reproduce once, then copy only a short excerpt around the first error from the module's diagnostics. Remove tokens, cookies, authorization data, account information, email addresses, phone numbers, device identifiers, private server addresses, prompts, responses, file URLs, and any other private data.
+- Opening an issue: search existing reports, then use the [Bug report](https://github.com/haoyangtu09-art/Deekseep/issues/new?template=bug_report.yml) or [Compatibility report](https://github.com/haoyangtu09-art/Deekseep/issues/new?template=compatibility_report.yml) form with exact versions and a minimal redacted log.
 
 More cases are covered in [Troubleshooting](docs/TROUBLESHOOTING.md).
 
@@ -165,9 +165,9 @@ Read the complete [Disclaimer](DISCLAIMER.md) before installing. Experimental fu
 
 The public API implementation plan currently records these statuses:
 
-- **Completed:** OpenAI and Anthropic formats, stable mainland interfaces, the exact Google Play 2.2.2 mapping, and the gated Experimental Features page.
-- **Planned:** explicit socket-to-host cancellation confirmation, API image input, persistent Responses state with idempotency keys, a redacted diagnostic bundle, configurable safe ports, and broader Anthropic/Claude Code regression coverage.
-- **Not scheduled:** support for additional DeepSeek versions. Each host update requires compatibility confirmation and may require a new mapping.
+- Completed: OpenAI and Anthropic formats, stable mainland interfaces, the exact Google Play 2.2.2 mapping, and the gated Experimental Features page.
+- Planned: explicit socket-to-host cancellation confirmation, API image input, persistent Responses state with idempotency keys, a redacted diagnostic bundle, configurable safe ports, and broader Anthropic/Claude Code regression coverage.
+- Not scheduled: support for additional DeepSeek versions. Each host update requires compatibility confirmation and may require a new mapping.
 
 See the [local API implementation plan](docs/LOCAL_DEEPSEEK_API_GATEWAY_PLAN.md). Planned work is not part of the current feature set until it is implemented and released.
 
