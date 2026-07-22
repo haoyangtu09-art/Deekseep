@@ -32,8 +32,7 @@ packages.
 
 ## Module and API
 
-- Simplified the standalone module page to show activation, installed DeepSeek
-  version, module version, and module build time. The SELinux row was removed.
+- Simplified the standalone module UI.
 - Improved OpenAI Chat/Responses JSON and SSE behavior, Anthropic Messages
   streaming, Codex and Claude Code tool loops, session isolation, heartbeats,
   and incremental delivery through the native DeepSeek transport.

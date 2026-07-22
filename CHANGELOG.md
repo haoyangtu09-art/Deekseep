@@ -29,9 +29,7 @@ All notable public releases are documented here.
   sensitive credentials.
 - Added automatic Chinese/English UI selection, an explicit language picker in
   DeepSeek, and English text for the module launcher and help pages.
-- Simplified the module launcher status page: it now shows the installed
-  DeepSeek version, module version, and module build time, and no longer shows
-  the device SELinux state.
+- Simplified the standalone module UI.
 - Kept this port on the `google-play` branch as an exact-build target and
   distributed its labelled APK alongside the mainland builds in `v1.7.2`.
 
