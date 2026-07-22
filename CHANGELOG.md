@@ -17,9 +17,7 @@ All notable public releases are documented here.
 - Completed English coverage for settings, dialogs, Help & Issues, Experimental
   Features, account tools, editor/search screens, API controls, warnings, and
   runtime status text, with regression coverage for missing translations.
-- Simplified the standalone module status page. It now shows activation,
-  installed DeepSeek version, module version, and module build time; the SELinux
-  row and its process-based status lookup were removed.
+- Simplified the standalone module UI.
 - Improved OpenAI Chat/Responses and Anthropic Messages streaming, incremental
   activity delivery, client-session isolation, tool-result continuation, and
   Codex/Claude Code compatibility through the native DeepSeek transport.

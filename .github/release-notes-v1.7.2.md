@@ -27,9 +27,7 @@ obfuscation maps and must not be mixed.
 
 ## Module launcher
 
-- Simplified the launcher to a compact activation and version status page.
-- Shows the installed DeepSeek version, module version, and build time.
-- Removed the SELinux status row and the associated system-command lookup.
+- Simplified the standalone module UI.
 
 ## Features and compatibility
 
