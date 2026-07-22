@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title description">
+  <title id="title">Deekseep LSPosed</title>
+  <desc id="description">Social preview for an independent LSPosed and Xposed module with account, chat, image, and local API tools for the DeepSeek Android app.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#172554"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#ffffff" stroke-opacity="0.045" stroke-width="1"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#020617" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#background)"/>
+  <rect width="1280" height="640" fill="url(#grid)"/>
+  <circle cx="1115" cy="92" r="230" fill="#3b82f6" opacity="0.10"/>
+  <circle cx="1190" cy="610" r="280" fill="#8b5cf6" opacity="0.08"/>
+
+  <g transform="translate(88 78)">
+    <rect width="258" height="48" rx="24" fill="#ffffff" fill-opacity="0.09" stroke="#ffffff" stroke-opacity="0.14"/>
+    <circle cx="27" cy="24" r="8" fill="#60a5fa"/>
+    <text x="48" y="31" fill="#dbeafe" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="650" letter-spacing="1.2">ANDROID · LSPOSED</text>
+  </g>
+
+  <text x="88" y="256" fill="#f8fafc" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="82" font-weight="760" letter-spacing="-2">Deekseep LSPosed</text>
+  <rect x="90" y="286" width="220" height="7" rx="3.5" fill="url(#accent)"/>
+  <text x="88" y="349" fill="#bfdbfe" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="440">Independent tools for the DeepSeek Android app</text>
+
+  <g font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20" font-weight="620" fill="#e2e8f0">
+    <g transform="translate(88 402)">
+      <rect width="174" height="54" rx="16" fill="#ffffff" fill-opacity="0.08" stroke="#60a5fa" stroke-opacity="0.42"/>
+      <text x="24" y="34">Account tools</text>
+    </g>
+    <g transform="translate(278 402)">
+      <rect width="166" height="54" rx="16" fill="#ffffff" fill-opacity="0.08" stroke="#60a5fa" stroke-opacity="0.42"/>
+      <text x="24" y="34">Chat editor</text>
+    </g>
+    <g transform="translate(460 402)">
+      <rect width="198" height="54" rx="16" fill="#ffffff" fill-opacity="0.08" stroke="#818cf8" stroke-opacity="0.48"/>
+      <text x="24" y="34">Image workflows</text>
+    </g>
+    <g transform="translate(674 402)">
+      <rect width="152" height="54" rx="16" fill="#ffffff" fill-opacity="0.08" stroke="#818cf8" stroke-opacity="0.48"/>
+      <text x="24" y="34">Local APIs</text>
+    </g>
+  </g>
+
+  <g transform="translate(965 178)" filter="url(#shadow)">
+    <rect width="226" height="304" rx="36" fill="#0f172a" stroke="#93c5fd" stroke-opacity="0.28" stroke-width="2"/>
+    <rect x="30" y="36" width="112" height="16" rx="8" fill="#f8fafc" fill-opacity="0.88"/>
+    <rect x="30" y="67" width="162" height="9" rx="4.5" fill="#94a3b8" fill-opacity="0.55"/>
+    <g transform="translate(30 112)">
+      <rect width="166" height="46" rx="15" fill="#1e293b"/>
+      <rect x="124" y="12" width="28" height="22" rx="11" fill="#3b82f6"/>
+      <circle cx="141" cy="23" r="8" fill="#dbeafe"/>
+    </g>
+    <g transform="translate(30 172)">
+      <rect width="166" height="46" rx="15" fill="#1e293b"/>
+      <rect x="124" y="12" width="28" height="22" rx="11" fill="#6366f1"/>
+      <circle cx="141" cy="23" r="8" fill="#e0e7ff"/>
+    </g>
+    <g transform="translate(30 232)">
+      <rect width="166" height="42" rx="14" fill="url(#accent)" opacity="0.9"/>
+      <circle cx="30" cy="21" r="7" fill="#ffffff" fill-opacity="0.92"/>
+      <rect x="49" y="16" width="84" height="10" rx="5" fill="#ffffff" fill-opacity="0.82"/>
+    </g>
+  </g>
+
+  <text x="88" y="564" fill="#94a3b8" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20" letter-spacing="0.5">Account · chat · image · developer tools</text>
+</svg>

@@ -1,0 +1,82 @@
+name: Feature request
+description: Propose a concrete improvement for Deekseep LSPosed
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A useful request explains a real workflow and the problem to solve. One-line requests such as “add feature X” do not provide enough information for design or compatibility review.
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Real-world use case
+      description: Describe what you are trying to accomplish, who needs it, and when it is needed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_problem
+    attributes:
+      label: Current problem
+      description: Explain what prevents or complicates this workflow today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_improvement
+    attributes:
+      label: Proposed improvement
+      description: Describe the behavior you would expect, including where it should appear and how a user controls it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe existing DeepSeek, Android, LSPosed, or external workflows you have tried.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: app_channel
+    attributes:
+      label: Relevant DeepSeek App channel
+      options:
+        - All supported channels
+        - Mainland China official build
+        - Google Play build
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: input
+    id: app_version
+    attributes:
+      label: Relevant DeepSeek App version and versionCode
+      description: Write "Not version-specific" only when the request is genuinely independent of the host build.
+      placeholder: "2.2.2 (versionCode 233), or Not version-specific"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: testing
+    attributes:
+      label: Willing to test an implementation?
+      options:
+        - Yes
+        - Maybe, with clear instructions
+        - No
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: request_quality
+    attributes:
+      label: Request checklist
+      options:
+        - label: I searched existing Issues and documented a concrete use case, current problem, proposed behavior, and alternatives.
+          required: true

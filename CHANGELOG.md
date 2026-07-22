@@ -2,6 +2,19 @@
 
 All notable public releases are documented here.
 
+## [Unreleased]
+
+### Documentation
+
+- Reworked the GitHub project documentation around a faster compatibility,
+  download, installation, screenshot, troubleshooting, and risk overview.
+- Added complete English and Simplified Chinese README files with matching
+  version, channel, framework, scope, and APK guidance.
+- Added structured GitHub Bug, compatibility, and feature Issue Forms plus a
+  detailed Pull Request template.
+- Added a real in-app project screenshot, a 1280 × 640 social preview SVG, and
+  a manual GitHub repository setup guide.
+
 ## 1.7.2 - 2026-07-22
 
 ### Unified channel release

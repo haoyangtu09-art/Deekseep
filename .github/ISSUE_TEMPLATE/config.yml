@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Installation and troubleshooting guide
+    url: https://github.com/haoyangtu09-art/Deekseep/blob/main/docs/TROUBLESHOOTING.md
+    about: Check known installation, compatibility, account, image, and local API problems before filing an issue.
   - name: Private security report
     url: https://github.com/haoyangtu09-art/Deekseep/security/advisories/new
-    about: Report vulnerabilities that may expose private data.
+    about: Privately report vulnerabilities that may expose credentials, conversations, files, or account data.

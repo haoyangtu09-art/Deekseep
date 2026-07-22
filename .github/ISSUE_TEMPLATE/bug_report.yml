@@ -1,56 +1,180 @@
 name: Bug report
-description: Report a reproducible Deekseep module problem
-title: "[Bug] "
-labels: ["bug"]
+description: Report a reproducible problem in Deekseep LSPosed
+title: "[Bug]: "
+labels:
+  - bug
 body:
   - type: markdown
     attributes:
       value: |
-        Remove prompts, responses, account/session IDs, file URLs, and credentials before submitting.
+        Thank you for reporting a problem. Test only on data you have backed up.
+
+        Before posting, remove account details, tokens, cookies, email addresses, phone numbers, device identifiers, private server addresses, and all other authentication or personal data. Do not upload an unreviewed full log, account export, or chat database.
+
+  - type: input
+    id: module_version
+    attributes:
+      label: Deekseep LSPosed version
+      description: Use the version shown by the module or the exact release tag.
+      placeholder: "1.7.2"
+    validations:
+      required: true
+
   - type: dropdown
-    id: variant
+    id: apk_type
     attributes:
-      label: Variant
+      label: APK type
       options:
-        - Stable API 102
-        - Stable legacy
-        - Historical/discontinued build
+        - Stable API 102 (mainland)
+        - Stable Legacy (mainland)
+        - Google Play API 102
+        - Historical test build
+        - Diagnostic load probe
+        - Self-built or other
     validations:
       required: true
-  - type: input
-    id: deepseek
+
+  - type: dropdown
+    id: app_channel
     attributes:
-      label: DeepSeek version
-      placeholder: "2.2.2 (versionCode 233)"
+      label: DeepSeek App channel
+      options:
+        - Mainland China official build
+        - Google Play build
+        - Other or unknown
     validations:
       required: true
+
   - type: input
-    id: environment
+    id: app_version
     attributes:
-      label: Android and framework
-      placeholder: "Android 15, LSPosed build ..."
+      label: DeepSeek App version
+      placeholder: "2.2.2"
     validations:
       required: true
+
+  - type: input
+    id: app_version_code
+    attributes:
+      label: DeepSeek versionCode
+      placeholder: "233 or 236"
+    validations:
+      required: true
+
+  - type: input
+    id: android_version
+    attributes:
+      label: Android version
+      placeholder: "Android 15"
+    validations:
+      required: true
+
+  - type: input
+    id: device_model
+    attributes:
+      label: Device model
+      placeholder: "Manufacturer and model"
+    validations:
+      required: true
+
+  - type: input
+    id: root_solution
+    attributes:
+      label: Root or injection solution
+      placeholder: "Magisk, KernelSU, APatch, FPA, or other"
+    validations:
+      required: true
+
+  - type: input
+    id: xposed_implementation
+    attributes:
+      label: LSPosed/Xposed implementation and version
+      placeholder: "Implementation name and exact version/build"
+    validations:
+      required: true
+
+  - type: input
+    id: xposed_api
+    attributes:
+      label: LSPosed/Xposed API
+      placeholder: "libxposed API 102 or traditional API 82+"
+    validations:
+      required: true
+
+  - type: input
+    id: module_scope
+    attributes:
+      label: Module scope
+      description: List every package selected for this module.
+      placeholder: "com.deepseek.chat"
+    validations:
+      required: true
+
   - type: textarea
-    id: steps
+    id: problem
+    attributes:
+      label: Problem description
+      description: Explain what is broken, when it started, and which feature is affected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
     attributes:
       label: Reproduction steps
+      description: Provide a numbered, repeatable sequence beginning from a force-stopped DeepSeek app.
+      placeholder: |
+        1. Open ...
+        2. Enable ...
+        3. Tap ...
     validations:
       required: true
+
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: Expected result
     validations:
       required: true
+
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior
+      label: Actual result
     validations:
       required: true
+
   - type: textarea
     id: logs
     attributes:
-      label: Minimal redacted log excerpt
-      description: Do not upload a database or complete response log.
+      label: Minimal redacted logs
+      description: Paste only the short excerpt around the first error. Remove tokens, cookies, authorization data, account information, email, phone number, device identifiers, private server addresses, prompts, responses, file URLs, and other private data.
+      placeholder: "Redacted excerpt, or explain why no log is available"
+
+  - type: dropdown
+    id: clean_environment
+    attributes:
+      label: Tested in a clean module environment?
+      description: A clean test means only the matching Deekseep LSPosed variant is enabled for DeepSeek.
+      options:
+        - Yes
+        - No
+        - Not tested yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: conflicting_modules
+    attributes:
+      label: Other potentially conflicting modules
+      description: List other modules that hook DeepSeek, networking, account flows, Compose UI, storage, or database behavior. Write "None" if there are none.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: privacy_confirmation
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed account information, tokens, cookies, email addresses, phone numbers, device identifiers, private server addresses, and other sensitive authentication data from this report and its attachments.
+          required: true

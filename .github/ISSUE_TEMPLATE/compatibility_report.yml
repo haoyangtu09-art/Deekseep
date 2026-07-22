@@ -1,0 +1,163 @@
+name: Compatibility report
+description: Report which Deekseep LSPosed features work on an exact device and App build
+title: "[Compatibility]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Compatibility is build-specific. Report exact versions and test only after backing up important data.
+
+        Never attach account exports or full logs. Remove tokens, cookies, account details, email addresses, phone numbers, device identifiers, private server addresses, and other private information.
+
+  - type: dropdown
+    id: app_channel
+    attributes:
+      label: DeepSeek App channel
+      options:
+        - Mainland China official build
+        - Google Play build
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: input
+    id: app_version
+    attributes:
+      label: DeepSeek App version
+      placeholder: "2.2.2"
+    validations:
+      required: true
+
+  - type: input
+    id: app_version_code
+    attributes:
+      label: DeepSeek versionCode
+      placeholder: "233 or 236"
+    validations:
+      required: true
+
+  - type: input
+    id: module_version
+    attributes:
+      label: Deekseep LSPosed version
+      placeholder: "1.7.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: apk_type
+    attributes:
+      label: APK type
+      options:
+        - Stable API 102 (mainland)
+        - Stable Legacy (mainland)
+        - Google Play API 102
+        - Historical test build
+        - Diagnostic load probe
+        - Self-built or other
+    validations:
+      required: true
+
+  - type: input
+    id: android_version
+    attributes:
+      label: Android version
+      placeholder: "Android 15"
+    validations:
+      required: true
+
+  - type: input
+    id: device_model
+    attributes:
+      label: Device model
+      placeholder: "Manufacturer and model"
+    validations:
+      required: true
+
+  - type: input
+    id: xposed_version
+    attributes:
+      label: LSPosed/Xposed implementation and version
+      placeholder: "Implementation name and exact version/build"
+    validations:
+      required: true
+
+  - type: input
+    id: xposed_api
+    attributes:
+      label: LSPosed/Xposed API
+      placeholder: "libxposed API 102 or traditional API 82+"
+    validations:
+      required: true
+
+  - type: input
+    id: module_scope
+    attributes:
+      label: Module scope
+      placeholder: "com.deepseek.chat"
+    validations:
+      required: true
+
+  - type: textarea
+    id: working_features
+    attributes:
+      label: Features that work
+      description: List the features you actually tested and the result of each one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: broken_features
+    attributes:
+      label: Features that fail or were not tested
+      description: Separate failed features from features you did not test.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: crash
+    attributes:
+      label: Did DeepSeek crash?
+      options:
+        - No
+        - Yes, once
+        - Yes, repeatedly
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: logs_available
+    attributes:
+      label: Are redacted logs available?
+      options:
+        - Yes
+        - No
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Minimal redacted log or additional notes
+      description: Include only a short relevant excerpt. Remove all authentication, account, device, server, and conversation data.
+
+  - type: dropdown
+    id: further_testing
+    attributes:
+      label: Willing to assist with further testing?
+      options:
+        - Yes
+        - Maybe, with clear instructions
+        - No
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: privacy_confirmation
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I reviewed this report and removed tokens, cookies, account data, email, phone number, device identifiers, private server addresses, and other sensitive information.
+          required: true
