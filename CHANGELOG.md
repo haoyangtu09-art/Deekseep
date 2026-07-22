@@ -2,6 +2,34 @@
 
 All notable public releases are documented here.
 
+## 1.7.1-gplay.5 - 2026-07-22
+
+### Google Play 2.2.2 port
+
+- Ported the module to the exact Google Play DeepSeek 2.2.2 build
+  (`versionCode 236`) instead of treating the mainland and Play Store R8 maps as
+  interchangeable.
+- Restored and device-tested expert-mode selection, the native image picker and
+  upload path, temporary vision description, expert prompt rewrite, and local
+  image metadata preservation.
+- Restored the response-preservation chain across clear-response construction,
+  content-filter patches, status writes, final merge/apply, online history, and
+  cold local history. The client can preserve text already delivered to the
+  device; it cannot recover content the server never sent.
+- Fixed the Play stream event mapping (`mu0`/`iz7`/`lu0`) and coroutine sentinel
+  mapping (`l22`). The latter had caused the local API to return
+  `502 empty_completion` before an asynchronous native Flow emitted its first
+  token.
+- Verified real OpenAI Chat, OpenAI Responses JSON/SSE, Anthropic Messages, and
+  model-list routes through the installed app. An isolated Codex CLI regression
+  also completed a custom `apply_patch` tool-output loop without touching the
+  user's Codex login.
+- Removed complete Gateway Keys from API diagnostic logs and runtime status
+  JSON. Explicit connection files still contain the key by design and remain
+  sensitive credentials.
+- Kept this port on the `google-play` branch as an experimental, exact-build
+  target; the normal `v1.7.1` release assets remain mainland-China builds.
+
 ## 1.7.1 - 2026-07-22
 
 ### Release model

@@ -346,7 +346,7 @@ final class LocalApiGateway {
                 acceptThread.start();
                 writeConnectionInfo(true, null);
                 apiLog("START endpoint=" + endpoint() + " protocol=" + protocolMode
-                        + " api_key=" + apiKey
+                        + " key_configured=" + (apiKey != null)
                         + " backend_ready=" + newBackend.isReady());
                 writeRuntimeState();
             } catch (Throwable t) {
@@ -450,7 +450,7 @@ final class LocalApiGateway {
             apiKey = generateKey();
             writePrivateText(new File(c.getFilesDir(), "deekseep_local_api_key"), apiKey);
             writeConnectionInfo(isRunning(), "key rotated");
-            apiLog("KEY_ROTATED endpoint=" + endpoint() + " api_key=" + apiKey);
+            apiLog("KEY_ROTATED endpoint=" + endpoint());
             writeRuntimeState();
             return apiKey;
         }
@@ -474,7 +474,7 @@ final class LocalApiGateway {
             apiKey = value;
             writePrivateText(new File(c.getFilesDir(), "deekseep_local_api_key"), value);
             writeConnectionInfo(isRunning(), "custom key saved");
-            apiLog("CUSTOM_KEY_SAVED endpoint=" + endpoint() + " api_key=" + apiKey);
+            apiLog("CUSTOM_KEY_SAVED endpoint=" + endpoint());
             writeRuntimeState();
             return null;
         }
@@ -4127,7 +4127,7 @@ final class LocalApiGateway {
                     .put("listening", isRunning())
                     .put("endpoint", endpoint())
                     .put("protocol", protocolMode())
-                    .put("api_key", apiKey == null ? JSONObject.NULL : apiKey)
+                    .put("api_key_configured", apiKey != null)
                     .put("backend_ready", b != null && b.isReady())
                     .put("backend_status", b == null ? "not installed" : b.readinessDetail())
                     .put("received", receivedRequests.get())

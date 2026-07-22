@@ -220,27 +220,30 @@ final class ResponsePreserver {
     }
 
     private static String encodeHostMessage(ClassLoader cl, Object message) {
-        try {
-            Object json = staticField(cl.loadClass("x94"), "a");
-            Object serializer = staticField(cl.loadClass("hv"), "a");
-            Method encode = method(json, "c", 2);
-            Object value = encode == null ? null : encode.invoke(json, serializer, message);
-            return value instanceof String ? (String) value : null;
-        } catch (Throwable ignored) {
-            return null;
+        for (String[] pair : new String[][]{{"cc4", "jv"}, {"x94", "hv"}}) {
+            try {
+                Object json = staticField(cl.loadClass(pair[0]), "a");
+                Object serializer = staticField(cl.loadClass(pair[1]), "a");
+                Method encode = method(json, "c", 2);
+                Object value = encode == null ? null : encode.invoke(json, serializer, message);
+                if (value instanceof String) return (String) value;
+            } catch (Throwable ignored) {}
         }
+        return null;
     }
 
     private static Object decodeHostMessage(ClassLoader cl, String value) {
         if (value == null || value.length() == 0 || value.length() > MAX_HOST_JSON) return null;
-        try {
-            Object json = staticField(cl.loadClass("x94"), "a");
-            Object serializer = staticField(cl.loadClass("hv"), "a");
-            Method decode = method(json, "b", 2);
-            return decode == null ? null : decode.invoke(json, serializer, value);
-        } catch (Throwable ignored) {
-            return null;
+        for (String[] pair : new String[][]{{"cc4", "jv"}, {"x94", "hv"}}) {
+            try {
+                Object json = staticField(cl.loadClass(pair[0]), "a");
+                Object serializer = staticField(cl.loadClass(pair[1]), "a");
+                Method decode = method(json, "b", 2);
+                Object decoded = decode == null ? null : decode.invoke(json, serializer, value);
+                if (decoded != null) return decoded;
+            } catch (Throwable ignored) {}
         }
+        return null;
     }
 
     private static int originalContentScore(String fragments) {

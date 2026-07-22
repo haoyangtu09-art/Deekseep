@@ -5,25 +5,26 @@
 [![Android 7+](https://img.shields.io/badge/Android-7.0%2B-3ddc84)](https://developer.android.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> [!IMPORTANT]
-> **兼容性限制 / Compatibility limit**
+> [!WARNING]
+> **Google Play 实验分支 / Experimental Google Play branch**
 >
-> Deekseep 目前仅适配 **DeepSeek Android 中国大陆渠道版**，**不适配
-> Google Play / 国际版**。请勿在 Google Play 版上安装或启用本模块；其内部实现
-> 与混淆符号可能不同，相关 Hook 和数据功能无法保证工作。
+> 此 `google-play` 分支只针对 **Google Play DeepSeek 2.2.2
+> (`versionCode 236`)**。当前实机测试包为 **`1.7.1-gplay.5`**，已恢复专家模式、
+> 图片上传/视觉中继、响应覆盖保护，以及 OpenAI/Anthropic 本地 API。它仍是按精确
+> APK 混淆表适配的实验版本；使用前请备份聊天和账号数据。
 >
-> Deekseep currently supports only the **mainland-China distribution** of the
-> DeepSeek Android app. The **Google Play / international build is not
-> supported**. Do not install or enable this module for the Google Play build.
+> This branch targets only **Google Play DeepSeek 2.2.2 (`versionCode 236`)**.
+> Device build **`1.7.1-gplay.5`** restores expert mode, image upload/vision
+> relay, response-preservation guards, and the OpenAI/Anthropic local API. It is
+> still an exact-APK experimental port; back up chat and account data first.
 
-Deekseep is an unofficial Xposed module toolkit for the mainland-China
-distribution of the DeepSeek Android client.
+Deekseep is an unofficial Xposed module toolkit for the DeepSeek Android client.
 It provides a stable native settings entry, prompt injection, response-preservation
 hooks, local conversation tools, an advanced chat editor, database backup, and
-experimental expert-mode image relay. Both stable 1.7.1 builds also provide a
-authenticated local/LAN OpenAI/Anthropic gateway for local SDKs, Codex, and Claude Code.
-The release contains a modern libxposed API 102 build and a traditional Xposed
-compatibility build compiled from the same feature core.
+experimental expert-mode image relay. The port also provides an authenticated
+local/LAN OpenAI/Anthropic gateway for local SDKs, Codex, and Claude Code. This
+branch currently produces only the modern libxposed API 102 Google Play build;
+the traditional-Xposed directories remain mainland reference code.
 
 > [!CAUTION]
 > **UNOFFICIAL SOFTWARE - READ BEFORE INSTALLING**
@@ -36,26 +37,18 @@ compatibility build compiled from the same feature core.
 > your data, use only on accounts and devices you control, and accept all risk.
 > See the full [Disclaimer](DISCLAIMER.md).
 
-## Downloads
+## Google Play build
 
-The recommended build for a current LSPosed installation is
-**Deekseep Stable API 102**.
+The current branch build is **`1.7.1-gplay.5`**, using the modern libxposed API
+102 interface under [`module/`](module/). The normal `v1.7.1` GitHub release
+assets are mainland-China builds and must not be installed on the Google Play
+client. Until a separate Google Play prerelease is published, build this branch
+locally and keep the resulting APK separate from the stable mainland package.
 
-| Release asset | Channel | Xposed interface | Package | Intended use |
-|---|---|---|---|---|
-| [deekseep-stable-api102-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-api102-v1.7.1.apk) | Stable | libxposed API 102 | `com.dsmod.probe` | Current LSPosed; recommended |
-| [deekseep-stable-legacy-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-legacy-v1.7.1.apk) | Stable compatibility | Traditional Xposed API 82+ | `com.dsmod.probe` | Compatible FPA and older LSPosed environments |
-
-Modern and legacy builds use the same Android package ID but
-different signing keys. They cannot be installed over one another. Uninstall the
-old interface variant before switching.
-
-Checksums are published with every release in `SHA256SUMS.txt`.
-
-The current stable release is **1.7.1**. The former test editions are
-discontinued and no longer published. Maintained high-risk options are now
-collected under a gated **Experimental Features** page with a five-second
-first-entry disclosure and separate help.
+The Google Play port retains the gated **Experimental Features** page, its
+five-second first-entry disclosure, and separate help. Modern and legacy APKs
+share one package ID but may use different signing keys, so Android may require
+uninstalling the old interface variant before switching.
 
 ## Main Features
 
@@ -83,7 +76,7 @@ first-entry disclosure and separate help.
   entries together on overseas login pages without changing the Google switch.
 - Modern activation reporting through the official Xposed service bridge plus
   a UID-validated heartbeat from the DeepSeek target process.
-- A manually drawn local API control page in both stable builds,
+- A manually drawn local API control page,
   with unrestricted-background preflight, OpenAI/Anthropic selection, custom keys,
   Chat/Responses/Messages SSE, deep-thinking parameters, Codex/Claude Code Agent tool
   loops, HTTP heartbeat and adaptive rate-limit recovery, a module foreground keeper
@@ -97,14 +90,23 @@ See the [stable interface guide](docs/VARIANTS.md) and dedicated
 
 ## Compatibility
 
-- Supported DeepSeek channel: official mainland-China Android distribution only.
-- Unsupported DeepSeek channel: Google Play / international Android build.
+- Experimental target: Google Play DeepSeek Android 2.2.2 (`versionCode 236`)
+  with the inspected APKS fingerprint documented in
+  [Google Play port status](docs/GOOGLE_PLAY.md).
+- Device-verified in `1.7.1-gplay.5`: native settings entry, expert selection,
+  image picker/upload/vision relay, response-preservation hook chain, OpenAI
+  Chat/Responses (including SSE), Anthropic Messages, and an isolated Codex
+  Responses tool loop.
+- Other mapped features retain regression coverage but have not all received
+  the same exhaustive UI acceptance pass; treat the branch as experimental.
+- For the maintained mainland-China build, use the `main` branch and stable
+  release instead.
 - Module minimum Android version: Android 7.0 / API 24.
 - Modern interface: libxposed API 102, metadata under `META-INF/xposed/`.
 - Legacy interface: traditional Xposed API 82+, entry under `assets/xposed_init`.
 - Target application package: `com.deepseek.chat`.
-- The current modern symbol map and chat-fragment fix were checked against
-  the mainland-China DeepSeek Android 2.2.2 build (`versionCode 233`).
+- Do not reuse this symbol map for another Google Play version or for the
+  mainland-China `versionCode 233` APK.
 
 Most hooks target R8-obfuscated classes. A DeepSeek update can rename those
 classes without notice. Treat version compatibility as build-specific, not as a
@@ -112,10 +114,10 @@ permanent guarantee.
 
 ## Quick Installation
 
-1. Confirm that DeepSeek is the mainland-China Android build, not the Google
-   Play / international build.
+1. Confirm that DeepSeek is the Google Play 2.2.2 build (`versionCode 236`).
 2. Back up the DeepSeek chat database.
-3. Download exactly one release variant from the table above.
+3. Build `module/` from this branch, or use an explicitly labelled Google Play
+   prerelease asset when one exists. Do not use the normal mainland `v1.7.1` APK.
 4. Install it and enable it in the matching Xposed framework.
 5. Select `com.deepseek.chat` in scope. Modern libxposed does not require or
    support self-hooking the module application.
@@ -130,9 +132,9 @@ covered in [Installation](docs/INSTALLATION.md).
 
 | Path | Purpose |
 |---|---|
-| `module/` | Stable modern build using libxposed API 102 |
-| `module-legacy/` | Stable traditional Xposed adapter/build using the canonical stable core |
-| `module-inject/`, `module-inject-legacy/` | Discontinued historical test-edition source; not released |
+| `module/` | Google Play port using modern libxposed API 102 |
+| `module-legacy/` | Mainland traditional-Xposed reference; not ported to Google Play 236 |
+| `module-inject/`, `module-inject-legacy/` | Discontinued historical mainland test-edition source; not released |
 | `module-mtest/` | Historical diagnostic source; not part of the 1.7.1 release |
 | `scripts/` | Portable SDK discovery and stable-release build orchestration |
 | `docs/` | Installation, architecture, feature, compatibility, and repair notes |
@@ -148,14 +150,16 @@ Requirements: JDK 17 or newer, Android SDK Platform 35, Android Build Tools,
 `zip`, and `curl`.
 
 ```bash
-export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
-bash scripts/build-all.sh
+cd module
+bash test-expert-relay-regression.sh
+bash test-thinking-regression.sh
+bash build.sh
 ```
 
-The command builds both stable interfaces, runs the protocol/account/editor/relay
-regressions, and writes the two release files plus checksums to `dist/`. The scripts
-also support Termux/ARM and discover its native `aapt2`, `zipalign`, and
-`apksigner` tools automatically.
+The build writes `module/ds-probe.apk`. Do not run the repository-wide stable
+release build expecting a Google Play legacy APK; only `module/` carries the
+Play 236 symbol map. The scripts support Termux/ARM and discover its native
+`aapt2`, `zipalign`, and `apksigner` tools automatically.
 
 See [Building](docs/BUILDING.md) for individual commands, signing behavior, CI,
 and compile-only Xposed API boundaries.
@@ -186,8 +190,10 @@ read or update local chat databases, imported prompt files, uploaded-image
 metadata, response events, and—when explicitly enabled—local API requests and
 private connection diagnostics. Server-response logging is off by default because
 those logs can contain complete prompts and model output. Do not publish logs or
-database backups without reviewing and redacting them. Local API connection and
-status files contain the complete Gateway Key and must be treated as credentials.
+database backups without reviewing and redacting them. The private connection
+file and its optional shared-storage compatibility copy contain the complete
+Gateway Key and must be treated as credentials; diagnostic logs and runtime
+status JSON deliberately record only whether a key is configured.
 
 The response-preservation option only prevents a client-side replacement of text
 that has already reached the device. It does not provide access to content the
