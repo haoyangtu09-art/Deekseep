@@ -33,9 +33,6 @@ obfuscation maps and must not be mixed.
 
 ## Features and compatibility
 
-- Added multi-account management with saved account slots, explicit add,
-  switch and remove actions, selectable JSON import/export, and validation
-  before candidate credentials are stored.
 - Included the Google Play 2.2.2 adaptation in the same release. The Play build
   restores its mapped settings entry, expert image flow, prompt/chat tools,
   response preservation, account/login hooks, and local API paths.

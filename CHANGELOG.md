@@ -20,9 +20,6 @@ All notable public releases are documented here.
 - Simplified the standalone module status page. It now shows activation,
   installed DeepSeek version, module version, and module build time; the SELinux
   row and its process-based status lookup were removed.
-- Included multi-account management as a user feature with account slots,
-  explicit add/switch/remove actions, selectable JSON import/export, and
-  validation before candidate credentials are saved.
 - Improved OpenAI Chat/Responses and Anthropic Messages streaming, incremental
   activity delivery, client-session isolation, tool-result continuation, and
   Codex/Claude Code compatibility through the native DeepSeek transport.
