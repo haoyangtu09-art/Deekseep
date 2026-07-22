@@ -21,9 +21,6 @@ packages.
 
 ## New user features
 
-- Added multi-account management with saved account slots, explicit add,
-  switch and remove actions, selectable JSON import/export, and validation
-  before candidate credentials are stored.
 - Added automatic Chinese/English selection from DeepSeek's language, an
   explicit language picker, and complete English module/help text. Other host
   languages fall back to English.
