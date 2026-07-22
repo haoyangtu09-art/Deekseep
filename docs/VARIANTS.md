@@ -1,22 +1,26 @@
 # Build Variants
 
-Deekseep 1.7.1 publishes two stable APKs. They compile the same canonical
-feature core and differ only in the Xposed entry interface and packaging.
+Deekseep 1.7.2 publishes three channel-labelled APKs. The two mainland builds
+compile the same canonical feature core and differ only in the Xposed entry
+interface and packaging. The Google Play build is compiled from the separate
+`google-play` branch because its R8 symbol map differs.
 
 ## Selection Guide
 
-| Directory | 1.7.1 release asset | Framework target | Package ID |
+| Source | 1.7.2 release asset | DeepSeek target | Framework target |
 |---|---|---|---|
-| `module/` | `deekseep-stable-api102-v1.7.1.apk` | Current LSPosed with libxposed API 102 | `com.dsmod.probe` |
-| `module-legacy/` | `deekseep-stable-legacy-v1.7.1.apk` | Traditional Xposed API 82+, including compatible FPA/older LSPosed environments | `com.dsmod.probe` |
+| `main:module/` | `deekseep-stable-api102-v1.7.2.apk` | Mainland 2.2.2 (`233`) | Current LSPosed with libxposed API 102 |
+| `main:module-legacy/` | `deekseep-stable-legacy-v1.7.2.apk` | Mainland 2.2.2 (`233`) | Traditional Xposed API 82+, compatible FPA/older LSPosed |
+| `google-play:module/` | `deekseep-google-play-2.2.2-v1.7.2.apk` | Google Play 2.2.2 (`236`) | Current LSPosed with libxposed API 102 |
 
 Use the API 102 build on a current LSPosed installation. Use the legacy build
 only when the framework cannot load modern libxposed metadata.
 
-## 1.7.1 Feature Parity
+## 1.7.2 Feature Parity
 
-Both release APKs are built from `module/src/com/dsmod/probe` and therefore
-contain the same stable and opt-in experimental functionality:
+The two mainland APKs are built from `module/src/com/dsmod/probe`. The Google
+Play branch carries the same maintained features with its own mapped host
+symbols. All three include:
 
 - settings entry, prompt injection, response preservation and diagnostics;
 - account import/export with strict server validation;

@@ -3,9 +3,9 @@ package com.dsmod.probe;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,91 +15,43 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+/** Plain standalone status page. Its language follows Android's system language. */
 public class SettingsActivity extends Activity {
 
-    public static final String VERSION = "1.7.1";
+    public static final String VERSION = BuildInfo.MODULE_VERSION;
     private static final int REQ_STORAGE = 0xD540;
+    private static final String TARGET_PACKAGE = "com.deepseek.chat";
+    private static final int BLACK = 0xFF000000;
+    private static final int WHITE = 0xFFF5F5F5;
+    private static final int MUTED = 0xFF999999;
+    private static final int LINE = 0xFF2A2A2A;
 
-    private boolean dark;
-    private int text, sub, card, bg;
+    private boolean renderedChinese;
+    private boolean rendered;
     private TextView activationTitle;
     private TextView activationDetail;
+    private TextView activationMark;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable activationStateChanged = new Runnable() {
         @Override public void run() { refreshActivationState(); }
     };
 
-    private int dp(float v) {
-        return Math.round(TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()));
-    }
-
     @Override
-    protected void onCreate(Bundle s) {
-        super.onCreate(s);
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        UiLanguage.refreshSystem(this);
+        renderUi();
         ensureStoragePermission();
-
-        dark  = DeekseepUi.isDark(this);
-        bg    = dark ? 0xFF1B1B1D : 0xFFF5F6F8;
-        card  = dark ? 0xFF2A2A2D : 0xFFFFFFFF;
-        text  = dark ? 0xFFECECEC : 0xFF1A1A1A;
-        sub   = dark ? 0xFF9A9A9E : 0xFF888888;
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(bg);
-        root.setPadding(dp(16), dp(24), dp(16), dp(16));
-
-        // 标题
-        addText(root, "Deekseep", 26, text, Typeface.BOLD, 0);
-        addText(root, "DeepSeek 模块", 13, sub, Typeface.NORMAL, dp(4));
-
-        addSpacer(root, dp(20));
-
-        // 激活状态卡片
-        LinearLayout stCard = makeCard();
-        stCard.setGravity(Gravity.CENTER);
-        stCard.setPadding(dp(20), dp(44), dp(20), dp(44));
-
-        activationTitle = new TextView(this);
-        activationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-        activationTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        activationTitle.setGravity(Gravity.CENTER);
-        stCard.addView(activationTitle);
-
-        activationDetail = new TextView(this);
-        activationDetail.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        activationDetail.setTextColor(sub);
-        activationDetail.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams statusDetailLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        statusDetailLp.topMargin = dp(12);
-        stCard.addView(activationDetail, statusDetailLp);
-
-        root.addView(stCard, cardLp(dp(14)));
-
-        // 版本卡片
-        LinearLayout verCard = makeCard();
-        verCard.setOrientation(LinearLayout.HORIZONTAL);
-        verCard.setGravity(Gravity.CENTER_VERTICAL);
-        verCard.setPadding(dp(16), dp(16), dp(16), dp(16));
-        addText(verCard, "版本", 16, text, Typeface.NORMAL, 0).setLayoutParams(
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        addText(verCard, BuildInfo.MODULE_VERSION, 16, sub, Typeface.NORMAL, 0);
-        root.addView(verCard, cardLp(dp(14)));
-
-        // 版本下方灰色小字：libxposed API 版本 + 编译日期
-        addText(root, (isLegacyBuild() ? "Xposed API " : "libxposed API ")
-                        + BuildInfo.API_VERSION + "　·　编译于 " + BuildInfo.BUILD_DATE,
-                11, sub, Typeface.NORMAL, dp(8));
-
-        setContentView(root);
-        refreshActivationState();
         XposedActivationProvider.setStateListener(activationStateChanged);
         handler.postDelayed(activationStateChanged, 300L);
         handler.postDelayed(activationStateChanged, 1200L);
@@ -108,6 +60,9 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        UiLanguage.refreshSystem(this);
+        boolean currentChinese = UiLanguage.isChinese(this);
+        if (!rendered || currentChinese != renderedChinese) renderUi();
         XposedActivationProvider.setStateListener(activationStateChanged);
         handler.post(activationStateChanged);
         handler.postDelayed(activationStateChanged, 500L);
@@ -120,136 +75,205 @@ public class SettingsActivity extends Activity {
         super.onDestroy();
     }
 
+    private void renderUi() {
+        renderedChinese = UiLanguage.isChinese(this);
+        rendered = true;
+        configureBlackWindow();
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(BLACK);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(22), dp(42), dp(22), dp(28));
+        scroll.addView(root, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        root.addView(text("Deekseep", 34, WHITE, Typeface.DEFAULT));
+        addDivider(root, 24);
+
+        LinearLayout status = new LinearLayout(this);
+        status.setOrientation(LinearLayout.HORIZONTAL);
+        status.setGravity(Gravity.CENTER_VERTICAL);
+        status.setPadding(0, dp(22), 0, dp(22));
+        root.addView(status, matchWrap());
+
+        LinearLayout statusText = new LinearLayout(this);
+        statusText.setOrientation(LinearLayout.VERTICAL);
+        status.addView(statusText, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        activationTitle = text("", 25, WHITE,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        statusText.addView(activationTitle);
+        activationDetail = text("", 14, MUTED, Typeface.DEFAULT);
+        LinearLayout.LayoutParams detailLp = matchWrap();
+        detailLp.topMargin = dp(5);
+        statusText.addView(activationDetail, detailLp);
+
+        activationMark = text("", 31, WHITE, Typeface.DEFAULT);
+        activationMark.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams markLp = new LinearLayout.LayoutParams(dp(48), dp(48));
+        markLp.leftMargin = dp(12);
+        status.addView(activationMark, markLp);
+
+        addDivider(root, 0);
+        root.addView(infoRow(UiLanguage.text(this, "DeepSeek 版本", "DeepSeek version"),
+                deepSeekVersion()));
+        addDivider(root, 0);
+        root.addView(infoRow(UiLanguage.text(this, "模块版本", "Module version"),
+                BuildInfo.MODULE_VERSION));
+        addDivider(root, 0);
+        root.addView(infoRow(UiLanguage.text(this, "模块编译时间", "Module build time"),
+                BuildInfo.BUILD_DATE));
+        addDivider(root, 0);
+
+        setContentView(scroll);
+        refreshActivationState();
+    }
+
+    private LinearLayout infoRow(String label, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(20), 0, dp(20));
+        TextView name = text(label, 17, MUTED, Typeface.DEFAULT);
+        row.addView(name, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView data = text(value, 17, WHITE, Typeface.DEFAULT);
+        data.setGravity(Gravity.END);
+        row.addView(data);
+        return row;
+    }
+
     private void refreshActivationState() {
-        if (activationTitle == null || activationDetail == null || isFinishing()) return;
+        if (activationTitle == null || isFinishing()) return;
         boolean framework = XposedActivationProvider.isFrameworkConnected();
         boolean target = XposedActivationProvider.isTargetRecentlyActive(this);
-        if (isLegacyBuild()) {
-            activationTitle.setText(target ? "\u25CF  已激活" : "\u25CB  待验证");
-            activationTitle.setTextColor(target ? 0xFF2ECC71 : 0xFFB0B0B0);
-            activationDetail.setText(target
-                    ? "DeepSeek 目标进程最近已验证传统 Xposed 注入。" + targetVersionSuffix()
-                    : "尚未收到 DeepSeek 目标回报。请在传统 Xposed/FPA 中启用模块、勾选 "
-                            + "DeepSeek，然后启动一次 DeepSeek。");
-            return;
-        }
-        if (framework && target) {
-            activationTitle.setText("\u25CF  已激活");
-            activationTitle.setTextColor(0xFF2ECC71);
-            activationDetail.setText("LSPosed 服务已连接，DeepSeek 目标进程也已验证注入。"
-                    + targetVersionSuffix());
-        } else if (target) {
-            activationTitle.setText("\u25CF  已激活");
-            activationTitle.setTextColor(0xFF2ECC71);
-            activationDetail.setText("DeepSeek 目标进程最近已验证注入；框架服务会在可用时自动重连。"
-                    + targetVersionSuffix());
-        } else if (framework) {
-            activationTitle.setText("\u25CF  已启用");
-            activationTitle.setTextColor(0xFF2ECC71);
-            activationDetail.setText("LSPosed 已连接本模块。启动一次 DeepSeek 后，将进一步验证目标作用域。 ");
+        if (target) {
+            activationTitle.setText(UiLanguage.text(this, "已激活", "Activated"));
+            activationDetail.setText(apiDisplayName() + "  ·  DeepSeek " + deepSeekVersion());
+            activationMark.setText("✓");
+        } else if (framework || isLegacyBuild()) {
+            activationTitle.setText(UiLanguage.text(this, "待验证", "Waiting for verification"));
+            activationDetail.setText(apiDisplayName() + "  ·  " + UiLanguage.text(this,
+                    "启动 DeepSeek 后确认", "Launch DeepSeek to confirm"));
+            activationMark.setText("—");
         } else {
-            activationTitle.setText("\u25CB  待验证");
-            activationTitle.setTextColor(0xFFB0B0B0);
-            activationDetail.setText("尚未收到现代 Xposed 服务或 DeepSeek 目标回报。请在 LSPosed 启用模块、"
-                    + "勾选 DeepSeek，然后启动一次 DeepSeek。无需勾选模块应用自身。");
+            activationTitle.setText(UiLanguage.text(this, "未激活", "Not activated"));
+            activationDetail.setText(apiDisplayName() + "  ·  " + UiLanguage.text(this,
+                    "Xposed 框架未连接", "Xposed framework not connected"));
+            activationMark.setText("×");
         }
+    }
+
+    private String deepSeekVersion() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(TARGET_PACKAGE, 0);
+            long code = Build.VERSION.SDK_INT >= 28
+                    ? info.getLongVersionCode() : info.versionCode;
+            String name = info.versionName == null ? "" : info.versionName;
+            return code > 0L ? name + " (" + code + ")" : name;
+        } catch (Throwable ignored) {
+            return UiLanguage.text(this, "未安装", "Not installed");
+        }
+    }
+
+    private String apiDisplayName() {
+        String value = BuildInfo.API_VERSION == null ? "" : BuildInfo.API_VERSION.trim();
+        return (isLegacyBuild() ? "Xposed API " : "API ") + value;
     }
 
     private static boolean isLegacyBuild() {
         return BuildInfo.API_VERSION != null && BuildInfo.API_VERSION.contains("legacy");
     }
 
-    private String targetVersionSuffix() {
-        String version = XposedActivationProvider.targetVersion(this);
-        return version.length() == 0 ? "" : " DeepSeek " + version;
+    private void configureBlackWindow() {
+        Window window = getWindow();
+        if (window == null) return;
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        window.setStatusBarColor(BLACK);
+        window.setNavigationBarColor(BLACK);
+        View decor = window.getDecorView();
+        int flags = decor.getSystemUiVisibility();
+        if (Build.VERSION.SDK_INT >= 23) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (Build.VERSION.SDK_INT >= 26) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        decor.setSystemUiVisibility(flags);
     }
 
     private void ensureStoragePermission() {
         try {
             if (Build.VERSION.SDK_INT >= 30) {
                 if (!Environment.isExternalStorageManager()) {
-                    Toast.makeText(this, "请授予 Deekseep 储存权限", Toast.LENGTH_SHORT).show();
-                    Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                    i.setData(Uri.parse("package:" + getPackageName()));
+                    Toast.makeText(this, UiLanguage.text(this,
+                            "请授予 Deekseep 储存权限", "Please grant Deekseep storage access"),
+                            Toast.LENGTH_SHORT).show();
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
                     try {
-                        startActivity(i);
-                    } catch (Throwable t) {
+                        startActivity(intent);
+                    } catch (Throwable error) {
                         startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
                     }
                 }
                 return;
             }
-
             if (Build.VERSION.SDK_INT >= 23
-                    && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
                 if (Build.VERSION.SDK_INT <= 28) {
-                    requestPermissions(new String[]{
-                            Manifest.permission.READ_EXTERNAL_STORAGE,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                    }, REQ_STORAGE);
+                    requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_STORAGE);
                 } else {
-                    requestPermissions(new String[]{
-                            Manifest.permission.READ_EXTERNAL_STORAGE
-                    }, REQ_STORAGE);
+                    requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                            REQ_STORAGE);
                 }
             }
         } catch (Throwable ignored) {}
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode != REQ_STORAGE) return;
-        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-        Toast.makeText(this, granted ? "储存权限已授予" : "未授予储存权限", Toast.LENGTH_SHORT).show();
+        boolean granted = grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        Toast.makeText(this, UiLanguage.text(this,
+                granted ? "储存权限已授予" : "未授予储存权限",
+                granted ? "Storage access granted" : "Storage access was not granted"),
+                Toast.LENGTH_SHORT).show();
     }
 
-    // ── UI helpers ─────────────────────────────────────────────
-
-    private LinearLayout makeCard() {
-        LinearLayout ll = new LinearLayout(this);
-        ll.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable bg2 = new GradientDrawable();
-        bg2.setColor(card);
-        bg2.setCornerRadius(dp(14));
-        ll.setBackground(bg2);
-        return ll;
+    private TextView text(String value, int sp, int color, Typeface typeface) {
+        TextView view = new TextView(this);
+        view.setText(value == null ? "" : value);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        view.setTextColor(color);
+        view.setTypeface(typeface);
+        return view;
     }
 
-    private LinearLayout.LayoutParams cardLp(int topMargin) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+    private View divider() {
+        View view = new View(this);
+        view.setBackgroundColor(LINE);
+        return view;
+    }
+
+    private void addDivider(LinearLayout parent, int topMarginDp) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        params.topMargin = dp(topMarginDp);
+        parent.addView(divider(), params);
+    }
+
+    private LinearLayout.LayoutParams matchWrap() {
+        return new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = topMargin;
-        return lp;
     }
 
-    private void addSpacer(LinearLayout parent, int height) {
-        parent.addView(new android.view.View(this),
-                new LinearLayout.LayoutParams(0, height));
-    }
-
-    private TextView addText(ViewGroup parent, String txt, int sp, int color,
-                             int style, int topMargin) {
-        TextView tv = new TextView(this);
-        tv.setText(txt);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        tv.setTextColor(color);
-        tv.setTypeface(style == Typeface.BOLD ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = topMargin;
-        parent.addView(tv, lp);
-        return tv;
-    }
-
-    private void addTextToCard(ViewGroup parent, String txt, int sp, int color, int topMargin) {
-        TextView tv = new TextView(this);
-        tv.setText(txt);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        tv.setTextColor(color);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = topMargin;
-        parent.addView(tv, lp);
+    private int dp(float value) {
+        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
+                value, getResources().getDisplayMetrics()));
     }
 }

@@ -33,20 +33,25 @@ cd Deekseep
 bash scripts/build-all.sh
 ```
 
-The final `dist/` directory contains only the supported 1.7.1 assets:
+The final `dist/` directory contains the two mainland 1.7.2 assets:
 
 ```text
-deekseep-stable-api102-v1.7.1.apk
-deekseep-stable-legacy-v1.7.1.apk
+deekseep-stable-api102-v1.7.2.apk
+deekseep-stable-legacy-v1.7.2.apk
 SHA256SUMS.txt
 ```
 
 The release build runs the stable protocol, account, editor and expert-relay
-regressions, verifies both manifests are version 1.7.1, checks the two Xposed
+regressions, verifies both manifests are version 1.7.2, checks the two Xposed
 metadata layouts, and refuses test/probe APKs in `dist/`.
 
 The old test and load-probe projects are intentionally not release targets.
 See [Build Variants](VARIANTS.md).
+
+The Google Play APK is built from `google-play:module/` and added to the same
+GitHub release under the explicit
+`deekseep-google-play-2.2.2-v1.7.2.apk` filename. It cannot be generated from
+the mainland branch because the obfuscated host symbols differ.
 
 ## Build One Variant
 
@@ -92,7 +97,7 @@ libxposed API 102 AAR. It is a compile-only dependency:
 
 ## Shared Stable Core and Legacy Adapter
 
-`module/src/com/dsmod/probe` is the canonical 1.7.1 feature core. The legacy
+`module/src/com/dsmod/probe` is the canonical 1.7.2 mainland feature core. The legacy
 build generates its entry from the same `Main.java` and compiles the same
 feature classes through `module-legacy/compat/LegacyXposedModule.java`. This
 prevents the traditional package from drifting several releases behind the
@@ -169,6 +174,6 @@ A modern APK must contain `META-INF/xposed` and a legacy APK must contain
 ## Continuous Integration
 
 `.github/workflows/build.yml` installs Android Platform and Build Tools 35,
-builds and tests the two stable interfaces, and uploads the exact 1.7.1 `dist/`
+builds and tests the two stable mainland interfaces, and uploads the exact 1.7.2 `dist/`
 contents as a workflow artifact on pushes, pull requests, and manual dispatches.
 Test editions are not built or uploaded.

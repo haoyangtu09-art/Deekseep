@@ -10,20 +10,20 @@
 >
 > 国内版与 Google Play 版使用不同的混淆符号映射，安装包不能混用。
 > `main` 稳定构建匹配国内 DeepSeek 2.2.2 (`versionCode 233`)；
-> `google-play` 分支和对应的预发布构建匹配 Google Play DeepSeek 2.2.2
+> `google-play` 分支及 `v1.7.2` 内对应的渠道构建匹配 Google Play DeepSeek 2.2.2
 > (`versionCode 236`)。
 >
 > Mainland and Google Play packages use different obfuscation maps and are not
 > interchangeable. The `main` stable build targets DeepSeek 2.2.2 code 233;
-> the `google-play` branch and its prerelease target Play build code 236.
+> the `google-play` branch and its asset in `v1.7.2` target Play build code 236.
 
 Deekseep is an unofficial Xposed module toolkit for the DeepSeek Android client.
 It provides a stable native settings entry, prompt injection, response-preservation
 hooks, local conversation tools, an advanced chat editor, database backup, and
-experimental expert-mode image relay. Both stable 1.7.1 builds also provide a
+experimental expert-mode image relay. The 1.7.2 builds also provide an
 authenticated local/LAN OpenAI/Anthropic gateway for local SDKs, Codex, and Claude Code.
-The release contains a modern libxposed API 102 build and a traditional Xposed
-compatibility build compiled from the same feature core.
+The release contains mainland modern and traditional-Xposed builds plus a
+separately mapped Google Play modern build.
 
 > [!CAUTION]
 > **UNOFFICIAL SOFTWARE - READ BEFORE INSTALLING**
@@ -43,9 +43,9 @@ The recommended build for a current LSPosed installation is
 
 | Release asset | Channel | Xposed interface | Package | Intended use |
 |---|---|---|---|---|
-| [deekseep-stable-api102-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-api102-v1.7.1.apk) | Stable | libxposed API 102 | `com.dsmod.probe` | Current LSPosed; recommended |
-| [deekseep-stable-legacy-v1.7.1.apk](https://github.com/haoyangtu09-art/Deekseep/releases/latest/download/deekseep-stable-legacy-v1.7.1.apk) | Stable compatibility | Traditional Xposed API 82+ | `com.dsmod.probe` | Compatible FPA and older LSPosed environments |
-| [deekseep-google-play-2.2.2-v1.7.2.apk](https://github.com/haoyangtu09-art/Deekseep/releases/download/v1.7.2-google-play/deekseep-google-play-2.2.2-v1.7.2.apk) | Google Play prerelease | libxposed API 102 | `com.dsmod.probe` | Google Play 2.2.2 (`versionCode 236`) only |
+| [deekseep-stable-api102-v1.7.2.apk](https://github.com/haoyangtu09-art/Deekseep/releases/download/v1.7.2/deekseep-stable-api102-v1.7.2.apk) | Stable | libxposed API 102 | `com.dsmod.probe` | Mainland DeepSeek 2.2.2 (`233`), current LSPosed |
+| [deekseep-stable-legacy-v1.7.2.apk](https://github.com/haoyangtu09-art/Deekseep/releases/download/v1.7.2/deekseep-stable-legacy-v1.7.2.apk) | Stable compatibility | Traditional Xposed API 82+ | `com.dsmod.probe` | Mainland DeepSeek 2.2.2 (`233`), FPA/older LSPosed |
+| [deekseep-google-play-2.2.2-v1.7.2.apk](https://github.com/haoyangtu09-art/Deekseep/releases/download/v1.7.2/deekseep-google-play-2.2.2-v1.7.2.apk) | Google Play | libxposed API 102 | `com.dsmod.probe` | Google Play DeepSeek 2.2.2 (`236`) only |
 
 Modern and legacy builds use the same Android package ID but
 different signing keys. They cannot be installed over one another. Uninstall the
@@ -53,11 +53,11 @@ old interface variant before switching.
 
 Checksums are published with every release in `SHA256SUMS.txt`.
 
-The mainland stable release is **1.7.1**; the exact-build Google Play port is
-published separately as **1.7.2**. The former test editions are discontinued
-and no longer published. Maintained high-risk options are collected under a
-gated **Experimental Features** page with a five-second first-entry disclosure
-and separate help.
+The current release is **1.7.2**. Mainland modern, mainland Legacy, and the
+exact-build Google Play port are published together with distinct filenames.
+The former test editions are discontinued and no longer published. Maintained
+high-risk options are collected under a gated **Experimental Features** page
+with a five-second first-entry disclosure and separate help.
 
 ## Main Features
 
@@ -100,8 +100,8 @@ See the [stable interface guide](docs/VARIANTS.md) and dedicated
 ## Compatibility
 
 - Mainland stable target: DeepSeek Android 2.2.2 (`versionCode 233`) on `main`.
-- Google Play target: DeepSeek Android 2.2.2 (`versionCode 236`) on the
-  `google-play` branch and `v1.7.2-google-play` prerelease.
+- Google Play target: DeepSeek Android 2.2.2 (`versionCode 236`) from the
+  `google-play` branch, distributed in the same `v1.7.2` release.
 - Module minimum Android version: Android 7.0 / API 24.
 - Modern interface: libxposed API 102, metadata under `META-INF/xposed/`.
 - Legacy interface: traditional Xposed API 82+, entry under `assets/xposed_init`.

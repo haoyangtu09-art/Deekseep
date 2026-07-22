@@ -14,17 +14,26 @@ framework installers.
 
 ## Choose One APK
 
-For current LSPosed, install:
+For current LSPosed with mainland DeepSeek 2.2.2 (`versionCode 233`), install:
 
 ```text
-deekseep-stable-api102-v1.7.1.apk
+deekseep-stable-api102-v1.7.2.apk
 ```
 
-For FPA or an older framework that cannot load modern modules, install:
+For FPA or an older framework with mainland DeepSeek 2.2.2 (`233`), install:
 
 ```text
-deekseep-stable-legacy-v1.7.1.apk
+deekseep-stable-legacy-v1.7.2.apk
 ```
+
+For Google Play DeepSeek 2.2.2 (`versionCode 236`) on current LSPosed, install:
+
+```text
+deekseep-google-play-2.2.2-v1.7.2.apk
+```
+
+The mainland and Google Play APKs are not interchangeable. Check the installed
+DeepSeek version code before installation.
 
 The former modern and legacy test editions are discontinued in 1.7.1 and are
 not release downloads. Maintained high-risk functions now live behind the
@@ -90,10 +99,10 @@ signature if one is installed over the other.
 
 ## Upgrading from 1.7 or an Older Reasoning Writer
 
-Both 1.7.1 stable builds scan local assistant rows for a `THINK` fragment
+The maintained 1.7.2 builds scan local assistant rows for a `THINK` fragment
 without a numeric `id` and repair it idempotently.
 
-1. Install the 1.7.1 stable build matching your framework.
+1. Install the 1.7.2 build matching both your DeepSeek channel and framework.
 2. Confirm it is the only enabled Deekseep hook.
 3. Force-stop and restart DeepSeek.
 4. Open the affected conversation.
@@ -102,7 +111,7 @@ The migration preserves the original response and gives the malformed reasoning
 fragment a unique ID. A diagnostic line reports
 `repairMalformedThinkFragments fixed=N`. A later launch should report zero.
 
-The 1.7.1 APKs have higher Android version codes for their stable interface
+The 1.7.2 APKs have higher Android version codes for their stable interface
 tracks. Switching between modern and traditional interfaces still requires an
 uninstall when those builds use different keys.
 

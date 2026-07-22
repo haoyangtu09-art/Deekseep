@@ -73,6 +73,9 @@ public final class LocalApiGatewayProtocolRegressionTest {
         anthropicCumulativeUsageDoesNotInflateFragments();
         lanAddressPrefersReachableInterfaces();
         chatNonStreamToolCall();
+        openAiWaitsForUpstreamBeforeThinkTag();
+        openAiStreamsToolBearingDeltas();
+        openAiSlicesOversizedNativeDelta();
         chatSseToolCall();
         responsesSseShellCall();
         responsesNamespaceCall();
@@ -329,6 +332,47 @@ public final class LocalApiGatewayProtocolRegressionTest {
             @Override public LocalApiGateway.CompletionResult complete(
                     LocalApiGateway.CompletionRequest request,
                     LocalApiGateway.DeltaSink sink) throws Exception {
+                if (request.prompt.contains("OPENAI_UPSTREAM_ORDER")) {
+                    check(sink != null, "OpenAI upstream-order request discarded its delta sink");
+                    check(activeWire != null
+                                    && !activeWire.toString("UTF-8").contains("<think>"),
+                            "OpenAI think marker was sent before upstream processing");
+                    sink.onUpstreamStarted();
+                    check(activeWire.toString("UTF-8").contains("<think>"),
+                            "upstream-ready did not start OpenAI thinking");
+                    check(sink.onReasoning("OPENAI_UPSTREAM_READY"),
+                            "OpenAI upstream reasoning sink disconnected");
+                    check(sink.onText("OPENAI_ORDER_DONE"),
+                            "OpenAI upstream text sink disconnected");
+                    return new LocalApiGateway.CompletionResult(
+                            "OPENAI_ORDER_DONE", "OPENAI_UPSTREAM_READY", "stop");
+                }
+                if (request.prompt.contains("OPENAI_INCREMENTAL_TOOL_STREAM")) {
+                    check(sink != null, "OpenAI tool request discarded its live delta sink");
+                    sink.onUpstreamStarted();
+                    check(sink.onReasoning("LIVE_TOOL_REASONING_"),
+                            "OpenAI tool reasoning sink disconnected");
+                    check(activeWire != null && activeWire.toString("UTF-8")
+                                    .contains("LIVE_TOOL_REASONING_"),
+                            "OpenAI tool reasoning was buffered until completion");
+                    check(sink.onText("LIVE_TOOL_TEXT_"),
+                            "OpenAI tool text sink disconnected");
+                    check(activeWire.toString("UTF-8").contains("LIVE_TOOL_TEXT_"),
+                            "OpenAI tool-bearing ordinary text was buffered until completion");
+                    check(sink.onText("DONE"), "OpenAI tool text sink disconnected");
+                    return new LocalApiGateway.CompletionResult(
+                            "LIVE_TOOL_TEXT_DONE", "LIVE_TOOL_REASONING_", "stop");
+                }
+                if (request.prompt.contains("OPENAI_LARGE_DELTA")) {
+                    check(sink != null, "OpenAI large-delta request discarded its live sink");
+                    sink.onUpstreamStarted();
+                    StringBuilder large = new StringBuilder();
+                    for (int i = 0; i < 360; i++) large.append('Q');
+                    check(sink.onText(large.toString()),
+                            "OpenAI large-delta sink disconnected");
+                    return new LocalApiGateway.CompletionResult(
+                            large.toString(), "", "stop");
+                }
                 if (request.prompt.contains("ANTHROPIC_INCREMENTAL_STREAM")) {
                     check(sink != null, "Anthropic tool request discarded its live delta sink");
                     check(sink.onReasoning("think-"), "thinking sink disconnected early");
@@ -549,10 +593,21 @@ public final class LocalApiGatewayProtocolRegressionTest {
                     return new LocalApiGateway.CompletionResult("TOOL_LOOP_DONE", "", "stop");
                 }
                 if (request.toolPlan != null && request.toolPlan.find("shell", null) != null) {
+                    if (sink != null) {
+                        check(activeWire != null
+                                        && !activeWire.toString("UTF-8").contains("<think>"),
+                                "Responses think marker was sent before upstream processing");
+                        sink.onUpstreamStarted();
+                        check(sink.onReasoning("RESPONSES_LIVE_REASONING"),
+                                "Responses reasoning sink disconnected");
+                        check(activeWire.toString("UTF-8")
+                                        .contains("RESPONSES_LIVE_REASONING"),
+                                "Responses reasoning was buffered until tool completion");
+                    }
                     return new LocalApiGateway.CompletionResult(
                             "<tool>{\"name\":\"shell\","
                                     + "\"arguments\":{\"commands\":[\"pwd\"]}}</tool>",
-                            "", "stop");
+                            sink == null ? "" : "RESPONSES_LIVE_REASONING", "stop");
                 }
                 if (request.prompt.contains("multi_agent_v1")) {
                     return new LocalApiGateway.CompletionResult(
@@ -593,10 +648,53 @@ public final class LocalApiGatewayProtocolRegressionTest {
         String wire = invokeWire(handleChat, chatBody(true));
         check(wire.startsWith("HTTP/1.1 200 OK\r\n"), "Chat SSE status/header is wrong");
         check(wire.contains("text/event-stream"), "Chat SSE content type is missing");
+        check(wire.indexOf("<think>") > 0
+                        && wire.indexOf("<think>") < wire.indexOf("\"tool_calls\""),
+                "Chat SSE did not enter thinking before its tool call");
         check(wire.contains("\"tool_calls\""), "Chat SSE tool delta is missing");
         check(wire.contains("\"finish_reason\":\"tool_calls\""),
                 "Chat SSE tool finish is missing");
         check(wire.contains("data: [DONE]"), "Chat SSE terminator is missing");
+    }
+
+    private static void openAiWaitsForUpstreamBeforeThinkTag() throws Exception {
+        JSONObject body = new JSONObject().put("model", "deepseek-chat").put("stream", true)
+                .put("messages", new JSONArray().put(new JSONObject().put("role", "user")
+                        .put("content", "OPENAI_UPSTREAM_ORDER")));
+        String wire = invokeWire(handleChat, body);
+        int thinking = wire.indexOf("<think>");
+        int reasoning = wire.indexOf("OPENAI_UPSTREAM_READY", thinking);
+        int close = wire.indexOf("<\\/think>", reasoning);
+        int answer = wire.indexOf("OPENAI_ORDER_DONE", close);
+        check(thinking > 0 && reasoning > thinking && close > reasoning && answer > close,
+                "OpenAI thinking lifecycle is out of order");
+    }
+
+    private static void openAiStreamsToolBearingDeltas() throws Exception {
+        JSONObject body = new JSONObject().put("model", "deepseek-chat").put("stream", true)
+                .put("messages", new JSONArray().put(new JSONObject().put("role", "user")
+                        .put("content", "OPENAI_INCREMENTAL_TOOL_STREAM")))
+                .put("tools", new JSONArray().put(new JSONObject().put("type", "function")
+                        .put("function", responseFunction("lookup"))))
+                .put("tool_choice", "auto");
+        String wire = invokeWire(handleChat, body);
+        check(wire.contains("LIVE_TOOL_REASONING_")
+                        && wire.contains("LIVE_TOOL_TEXT_")
+                        && wire.contains("data: [DONE]"),
+                "OpenAI tool-bearing stream lost live deltas or its terminator");
+    }
+
+    private static void openAiSlicesOversizedNativeDelta() throws Exception {
+        JSONObject body = new JSONObject().put("model", "deepseek-chat").put("stream", true)
+                .put("messages", new JSONArray().put(new JSONObject().put("role", "user")
+                        .put("content", "OPENAI_LARGE_DELTA")));
+        String wire = invokeWire(handleChat, body);
+        StringBuilder unsliced = new StringBuilder();
+        for (int i = 0; i < 360; i++) unsliced.append('Q');
+        check(!wire.contains(unsliced.toString()),
+                "oversized native delta was sent as one giant SSE JSON event");
+        check(countOccurrences(wire, "\"content\":\"") >= 4,
+                "oversized native delta was not divided into incremental SSE frames");
     }
 
     private static void responsesSseShellCall() throws Exception {
@@ -608,6 +706,11 @@ public final class LocalApiGatewayProtocolRegressionTest {
         check(wire.contains("event: response.created"), "Responses created event is missing");
         check(wire.contains("event: response.in_progress"),
                 "Responses in_progress event is missing");
+        check(wire.indexOf("<think>") > 0
+                        && wire.indexOf("RESPONSES_LIVE_REASONING") > wire.indexOf("<think>")
+                        && wire.indexOf("RESPONSES_LIVE_REASONING")
+                                < wire.indexOf("\"type\":\"shell_call\""),
+                "Responses did not stream reasoning before its shell call");
         check(wire.contains("\"type\":\"shell_call\""),
                 "Responses shell_call item is missing");
         check(wire.contains("\"commands\":[\"pwd\"]"),
@@ -1371,6 +1474,17 @@ public final class LocalApiGatewayProtocolRegressionTest {
             activeWire = null;
         }
         return new String(out.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    private static int countOccurrences(String value, String needle) {
+        int count = 0;
+        int offset = 0;
+        while (value != null && needle != null && needle.length() > 0
+                && (offset = value.indexOf(needle, offset)) >= 0) {
+            count++;
+            offset += needle.length();
+        }
+        return count;
     }
 
     private static void check(boolean condition, String message) {

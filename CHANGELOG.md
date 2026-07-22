@@ -2,6 +2,34 @@
 
 All notable public releases are documented here.
 
+## 1.7.2 - 2026-07-22
+
+### Unified channel release
+
+- Published three explicitly named APKs in one release: mainland libxposed API
+  102, mainland traditional-Xposed compatibility, and the exact-build Google
+  Play 2.2.2 (`versionCode 236`) port. Mainland and Play symbol maps remain
+  separate and their APKs are not interchangeable.
+- Added automatic Chinese/English UI selection. Injected pages follow
+  DeepSeek's language on startup, an in-app language row can select Chinese or
+  English explicitly, and every other detected language falls back to English.
+  The standalone module activity follows Android's system language.
+- Completed English coverage for settings, dialogs, Help & Issues, Experimental
+  Features, account tools, editor/search screens, API controls, warnings, and
+  runtime status text, with regression coverage for missing translations.
+- Simplified the standalone module status page. It now shows activation,
+  installed DeepSeek version, module version, and module build time; the SELinux
+  row and its process-based status lookup were removed.
+- Included multi-account management as a user feature with account slots,
+  explicit add/switch/remove actions, selectable JSON import/export, and
+  validation before candidate credentials are saved.
+- Improved OpenAI Chat/Responses and Anthropic Messages streaming, incremental
+  activity delivery, client-session isolation, tool-result continuation, and
+  Codex/Claude Code compatibility through the native DeepSeek transport.
+- Kept expert image relay and the local API in the dedicated Experimental
+  Features section with the versioned first-entry disclosure and separate help.
+  Former test editions remain discontinued and are not release assets.
+
 ## 1.7.1 - 2026-07-22
 
 ### Release model

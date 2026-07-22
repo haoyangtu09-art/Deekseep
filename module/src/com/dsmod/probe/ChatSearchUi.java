@@ -47,7 +47,7 @@ final class ChatSearchUi {
 
     static void show(final Activity act) {
         final EditText input = new EditText(act);
-        input.setHint("输入关键词");
+        input.setHint(UiLanguage.text(act, "输入关键词", "Enter a keyword"));
         input.setSingleLine(true);
         LinearLayout wrap = new LinearLayout(act);
         int pad = dp(act, 16);
@@ -55,10 +55,11 @@ final class ChatSearchUi {
         wrap.addView(input, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         new AlertDialog.Builder(act)
-                .setTitle("搜索聊天记录")
+                .setTitle(UiLanguage.text(act, "搜索聊天记录", "Search chat history"))
                 .setView(wrap)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("搜索", new DialogInterface.OnClickListener() {
+                .setNegativeButton(UiLanguage.text(act, "取消", "Cancel"), null)
+                .setPositiveButton(UiLanguage.text(act, "搜索", "Search"),
+                        new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface dialog, int which) {
                         String keyword = input.getText().toString().trim();
                         if (keyword.length() > 0) search(act, keyword);
@@ -68,7 +69,7 @@ final class ChatSearchUi {
     }
 
     private static void search(final Activity act, final String keyword) {
-        Toast.makeText(act, "搜索中…", Toast.LENGTH_SHORT).show();
+        UiLanguage.toast(act, "搜索中…", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             public void run() {
                 final List<Hit> hits = new ArrayList<Hit>();
@@ -129,7 +130,8 @@ final class ChatSearchUi {
                 .replaceAll("\\s+", " ");
         Hit hit = new Hit();
         hit.sid = sid;
-        hit.title = title == null || title.length() == 0 ? "未命名对话" : title;
+        hit.title = title == null || title.length() == 0
+                ? UiLanguage.text("未命名对话", "Untitled chat") : title;
         hit.role = message.role;
         hit.source = source;
         hit.snippet = before + match + after;
@@ -158,8 +160,10 @@ final class ChatSearchUi {
 
         TextView heading = new TextView(act);
         heading.setText(hits.isEmpty()
-                ? "未找到「" + keyword + "」"
-                : "「" + keyword + "」命中 " + hits.size() + " 条");
+                ? UiLanguage.text(act, "未找到「" + keyword + "」",
+                        "No results for “" + keyword + "”")
+                : UiLanguage.text(act, "「" + keyword + "」命中 " + hits.size() + " 条",
+                        hits.size() + " results for “" + keyword + "”"));
         heading.setTextColor(textColor);
         heading.setTypeface(Typeface.DEFAULT_BOLD);
         heading.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
@@ -186,7 +190,7 @@ final class ChatSearchUi {
             row.setClickable(true);
 
             TextView meta = new TextView(act);
-            meta.setText(hit.source + " · " + hit.title);
+            meta.setText(UiLanguage.dynamic(act, hit.source) + " · " + hit.title);
             meta.setTextColor(subColor);
             meta.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
             meta.setSingleLine(true);
@@ -220,7 +224,7 @@ final class ChatSearchUi {
                         dialog.dismiss();
                         DeekseepUi.dismissForNativeNavigation();
                     } else {
-                        Toast.makeText(act,
+                        UiLanguage.toast(act,
                                 "当前登录账号的原生会话列表中没有该对话",
                                 Toast.LENGTH_LONG).show();
                     }
@@ -233,7 +237,7 @@ final class ChatSearchUi {
         }
 
         TextView close = new TextView(act);
-        close.setText("关闭");
+        close.setText(UiLanguage.text(act, "关闭", "Close"));
         close.setTextColor(subColor);
         close.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         close.setTypeface(Typeface.DEFAULT_BOLD);
@@ -247,6 +251,7 @@ final class ChatSearchUi {
         closeParams.gravity = Gravity.END;
         panel.addView(close, closeParams);
 
+        UiLanguage.localizeTree(act, panel);
         dialog.setContentView(panel);
         dialog.show();
         Window window = dialog.getWindow();

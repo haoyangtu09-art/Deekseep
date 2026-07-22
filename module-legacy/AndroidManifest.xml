@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.dsmod.probe"
-    android:versionCode="30"
-    android:versionName="1.7.1">
+    android:versionCode="31"
+    android:versionName="1.7.2">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
     <uses-permission
@@ -36,7 +36,7 @@
             android:name="com.dsmod.probe.SettingsActivity"
             android:exported="true"
             android:label="Deekseep"
-            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+            android:theme="@android:style/Theme.Material.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -47,7 +47,7 @@
             android:name="com.dsmod.probe.PromptPickerActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
         <activity
             android:name="com.dsmod.probe.LocalApiKeepAliveActivity"
@@ -83,5 +83,10 @@
             android:authorities="com.dsmod.probe.XposedService"
             android:exported="true"
             android:grantUriPermissions="false" />
+
+        <receiver
+            android:name="com.dsmod.probe.XposedActivationReceiver"
+            android:enabled="true"
+            android:exported="true" />
     </application>
 </manifest>

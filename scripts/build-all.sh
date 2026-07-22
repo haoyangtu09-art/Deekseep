@@ -41,25 +41,25 @@ fi
 "$APKSIGNER" verify "$ROOT/module-legacy/ds-probe-legacy.apk"
 
 cp "$ROOT/module/ds-probe.apk" \
-    "$DIST/deekseep-stable-api102-v1.7.1.apk"
+    "$DIST/deekseep-stable-api102-v1.7.2.apk"
 cp "$ROOT/module-legacy/ds-probe-legacy.apk" \
-    "$DIST/deekseep-stable-legacy-v1.7.1.apk"
+    "$DIST/deekseep-stable-legacy-v1.7.2.apk"
 
 if find "$DIST" -maxdepth 1 -type f \( -name '*test*' -o -name '*probe*' \) | grep -q .; then
-    echo "Refusing to publish retired test/diagnostic APKs in the 1.7.1 release" >&2
+    echo "Refusing to publish retired test/diagnostic APKs in the 1.7.2 release" >&2
     exit 1
 fi
 
 for manifest in "$ROOT/module/AndroidManifest.xml" "$ROOT/module-legacy/AndroidManifest.xml"; do
-    if ! grep -q 'android:versionName="1.7.1"' "$manifest"; then
-        echo "Release manifest is not version 1.7.1: $manifest" >&2
+    if ! grep -q 'android:versionName="1.7.2"' "$manifest"; then
+        echo "Release manifest is not version 1.7.2: $manifest" >&2
         exit 1
     fi
 done
 
-unzip -l "$DIST/deekseep-stable-api102-v1.7.1.apk" | grep -q 'META-INF/xposed/java_init.list'
-unzip -l "$DIST/deekseep-stable-legacy-v1.7.1.apk" | grep -q 'assets/xposed_init'
+unzip -l "$DIST/deekseep-stable-api102-v1.7.2.apk" | grep -q 'META-INF/xposed/java_init.list'
+unzip -l "$DIST/deekseep-stable-legacy-v1.7.2.apk" | grep -q 'assets/xposed_init'
 
 (cd "$DIST" && sha256sum *.apk > SHA256SUMS.txt)
 echo
-echo "The two stable 1.7.1 release files are in $DIST"
+echo "The two stable 1.7.2 release files are in $DIST"

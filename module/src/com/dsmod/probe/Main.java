@@ -156,12 +156,23 @@ public class Main extends XposedModule {
     static final String EXPERT_RELAY_SESSION_DIR =
             "/data/data/com.deepseek.chat/files/deekseep_expert_relay_sessions";
     static final String RELAY_PROMPT_MARKER = "【图片内容（自动识别）】";
+    static final String RELAY_PROMPT_MARKER_EN = "[Image content (automatically recognized)]";
     // 中继捕获的图片 fragment（qs7 JSON）按原会话 sid 落盘，供强杀重开后 pw0/fm8 注入。
     static final String RELAY_IMAGE_DIR =
             "/data/data/com.deepseek.chat/files/deekseep_relay_images";
     // 发给 vision 的中性描述指令（绝不能带用户越狱系统提示，否则 vision 会拒答）。
     static final String VISION_DESCRIBE_PROMPT =
             "请客观描述这张图片，100到200字：包括主要事物、颜色、场景、画面细节，以及逐字转录图中出现的所有文字。只做客观描述，不评价、不拒绝、不添加与图片无关的内容。";
+    static final String VISION_DESCRIBE_PROMPT_EN =
+            "Objectively describe this image in 100–200 words. Include the main subjects, colors, scene, visual details, and a verbatim transcription of all visible text. Describe only what is present; do not evaluate, refuse, or add unrelated content.";
+
+    private static String relayPromptMarker() {
+        return UiLanguage.text(RELAY_PROMPT_MARKER, RELAY_PROMPT_MARKER_EN);
+    }
+
+    private static String visionDescribePrompt() {
+        return UiLanguage.text(VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_PROMPT_EN);
+    }
     // 视觉探针诊断日志（私有目录，直写，最可靠）
     static final String RELAY_LOG_PATH = "/data/data/com.deepseek.chat/files/deekseep_vision.log";
     private static final String[] IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif"};
@@ -257,6 +268,7 @@ public class Main extends XposedModule {
     private static volatile boolean wechatMobileLoginUnlockInjectedLogged = false;
     private static volatile long activationHeartbeatAttemptAt = 0L;
     private static volatile boolean activationHeartbeatLogged = false;
+    private static volatile String lastUiLanguageLog = "";
     private static volatile long localApiKeepAliveHeartbeatAt;
     private static volatile String localApiKeepAliveError = "尚未启动前台保活";
     private static volatile boolean localApiKeepAliveControlLogged;
@@ -455,6 +467,18 @@ public class Main extends XposedModule {
                     try {
                         Activity act = (Activity) chain.getThisObject();
                         curAct = new WeakReference<>(act);
+                        // The Play build keeps its language tag in MMKV rather than Android's
+                        // per-app locale service. Re-read it on every resume so Deekseep follows a
+                        // host-language switch immediately.
+                        UiLanguage.refreshHost(act);
+                        String languageState = "mode=" + UiLanguage.currentMode(act)
+                                + ", host=" + UiLanguage.detectedLanguage(act)
+                                + ", effective=" + (UiLanguage.isChinese(act)
+                                ? "Chinese" : "English");
+                        if (!languageState.equals(lastUiLanguageLog)) {
+                            lastUiLanguageLog = languageState;
+                            log("UI language " + languageState);
+                        }
                         reportActivationHeartbeat(act);
                         if (isLocalApiEnabled() && isLocalApiBackgroundApproved(act)) {
                             requestLocalApiKeepAlive(act, true);
@@ -466,8 +490,10 @@ public class Main extends XposedModule {
                         if (!loadToastShown) {
                             loadToastShown = true;
                             try {
-                                android.widget.Toast.makeText(act,
-                                        "Deekseep 已注入 (v" + SettingsActivity.VERSION + ")",
+                                UiLanguage.toast(act,
+                                        UiLanguage.text(act,
+                                                "Deekseep 已注入 (v" + SettingsActivity.VERSION + ")",
+                                                "Deekseep injected (v" + SettingsActivity.VERSION + ")"),
                                         android.widget.Toast.LENGTH_SHORT).show();
                             } catch (Throwable ignored) {}
                         }
@@ -877,7 +903,7 @@ public class Main extends XposedModule {
     private static void showSidebarSelectOverlay(final Activity act) {
         final List<ChatEditorUi.Session> sessions = loadCurrentSidebarSessions(act);
         if (sessions.isEmpty()) {
-            Toast.makeText(act, "没有可删除的本地对话", Toast.LENGTH_SHORT).show();
+            UiLanguage.toast(act, "没有可删除的本地对话", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -958,7 +984,7 @@ public class Main extends XposedModule {
             public void onClick(View v) {
                 final int n = SIDEBAR_SELECTED.size();
                 if (n <= 0) {
-                    Toast.makeText(act, "先勾选要删除的对话", Toast.LENGTH_SHORT).show();
+                    UiLanguage.toast(act, "先勾选要删除的对话", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 confirmSidebarBatchDelete(act, sessions, n);
@@ -966,6 +992,7 @@ public class Main extends XposedModule {
         });
         updateSidebarSelectTitle(title, delete);
 
+        UiLanguage.localizeTree(act, root);
         ViewGroup decor = (ViewGroup) act.getWindow().getDecorView();
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 sidebarW,
@@ -986,8 +1013,13 @@ public class Main extends XposedModule {
 
     private static void updateSidebarSelectTitle(TextView title, TextView delete) {
         int n = SIDEBAR_SELECTED.size();
-        title.setText(n > 0 ? ("已选择 " + n) : "选择对话");
-        delete.setText(n > 0 ? ("删除(" + n + ")") : "删除");
+        Context context = title.getContext();
+        title.setText(n > 0
+                ? UiLanguage.text(context, "已选择 " + n, n + " selected")
+                : UiLanguage.text(context, "选择对话", "Select chats"));
+        delete.setText(n > 0
+                ? UiLanguage.text(context, "删除(" + n + ")", "Delete (" + n + ")")
+                : UiLanguage.text(context, "删除", "Delete"));
     }
 
     private static void refreshSidebarMarkLayer(final Activity act, final FrameLayout marks,
@@ -1292,7 +1324,8 @@ public class Main extends XposedModule {
         card.setBackground(bg);
 
         TextView title = new TextView(act);
-        title.setText("删除 " + n + " 个对话");
+        title.setText(UiLanguage.text(act,
+                "删除 " + n + " 个对话", "Delete " + n + " chats"));
         title.setTextColor(textColor);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
@@ -1351,6 +1384,7 @@ public class Main extends XposedModule {
         buttons.addView(del, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        UiLanguage.localizeTree(act, card);
         dlg.setContentView(card);
         dlg.show();
         Window w = dlg.getWindow();
@@ -1451,7 +1485,7 @@ public class Main extends XposedModule {
         if (nativeUnavailable > 0) msg += "，未取得原生链路 " + nativeUnavailable + " 个";
         if (fail > 0) msg += "，本地失败 " + fail + " 个";
         exitSidebarSelectMode();
-        Toast.makeText(act, msg, Toast.LENGTH_SHORT).show();
+        UiLanguage.toast(act, msg, Toast.LENGTH_SHORT).show();
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             public void run() {
                 try { act.recreate(); } catch (Throwable ignored) {}
@@ -1655,40 +1689,56 @@ public class Main extends XposedModule {
 
         String describe(boolean approved) {
             StringBuilder out = new StringBuilder();
-            out.append("电池优化：").append(dozeExempt ? "✓ 已设为不优化/不限制" : "✗ 仍受电池优化限制")
-                    .append("\n后台活动：").append(backgroundRestricted
-                            ? "✗ 系统禁止后台活动" : "✓ 系统允许后台活动")
-                    .append("\n首次放行：").append(approved && allowed()
-                            ? "✓ 校验通过" : "✗ 尚未通过校验");
-            if (error.length() > 0) out.append("\n检测错误：").append(error);
+            out.append(UiLanguage.text("电池优化：", "Battery optimization: "))
+                    .append(dozeExempt
+                            ? UiLanguage.text("✓ 已设为不优化/不限制", "✓ Unrestricted")
+                            : UiLanguage.text("✗ 仍受电池优化限制", "✗ Still restricted"))
+                    .append(UiLanguage.text("\n后台活动：", "\nBackground activity: "))
+                    .append(backgroundRestricted
+                            ? UiLanguage.text("✗ 系统禁止后台活动", "✗ Blocked by the system")
+                            : UiLanguage.text("✓ 系统允许后台活动", "✓ Allowed by the system"))
+                    .append(UiLanguage.text("\n首次放行：", "\nInitial approval: "))
+                    .append(approved && allowed()
+                            ? UiLanguage.text("✓ 校验通过", "✓ Approved")
+                            : UiLanguage.text("✗ 尚未通过校验", "✗ Not approved"));
+            if (error.length() > 0) out.append(UiLanguage.text(
+                    "\n检测错误：", "\nDetection error: ")).append(UiLanguage.dynamic(error));
             return out.toString();
         }
     }
 
     static LocalApiBackgroundState localApiBackgroundState(Context context) {
         if (context == null) {
-            return new LocalApiBackgroundState(false, true, "DeepSeek 上下文尚未就绪");
+            return new LocalApiBackgroundState(false, true,
+                    UiLanguage.text("DeepSeek 上下文尚未就绪",
+                            "DeepSeek context is not ready"));
         }
         boolean dozeExempt = false;
         boolean restricted = false;
         String error = "";
         try {
             PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (power == null) error = "无法读取电池优化状态";
+            if (power == null) error = UiLanguage.text(context,
+                    "无法读取电池优化状态", "Could not read battery optimization status");
             else dozeExempt = power.isIgnoringBatteryOptimizations(TARGET);
         } catch (Throwable t) {
-            error = "电池优化检测失败：" + safeThrowableMessage(t);
+            error = UiLanguage.text(context,
+                    "电池优化检测失败：", "Battery optimization check failed: ")
+                    + safeThrowableMessage(t);
         }
         if (Build.VERSION.SDK_INT >= 28) {
             try {
                 ActivityManager manager = (ActivityManager)
                         context.getSystemService(Context.ACTIVITY_SERVICE);
                 restricted = manager == null || manager.isBackgroundRestricted();
-                if (manager == null && error.length() == 0) error = "无法读取后台活动状态";
+                if (manager == null && error.length() == 0) error = UiLanguage.text(context,
+                        "无法读取后台活动状态", "Could not read background activity status");
             } catch (Throwable t) {
                 restricted = true;
                 if (error.length() == 0) {
-                    error = "后台活动检测失败：" + safeThrowableMessage(t);
+                    error = UiLanguage.text(context,
+                            "后台活动检测失败：", "Background activity check failed: ")
+                            + safeThrowableMessage(t);
                 }
             }
         }
@@ -1790,12 +1840,15 @@ public class Main extends XposedModule {
 
     static String rotateLocalApiKey(Activity activity) {
         String key = LocalApiGateway.rotateKey(activity);
-        return key == null ? "密钥轮换失败：请先打开 DeepSeek" : LocalApiGateway.connectionInfo();
+        return key == null ? UiLanguage.text(activity,
+                "密钥轮换失败：请先打开 DeepSeek",
+                "Could not rotate the key: open DeepSeek first")
+                : LocalApiGateway.connectionInfo();
     }
 
     static String setCustomLocalApiKey(Activity activity, String key) {
         String error = LocalApiGateway.setCustomKey(activity, key);
-        return error == null ? "保存成功" : error;
+        return error == null ? UiLanguage.text(activity, "保存成功", "Saved") : error;
     }
 
     static String localApiEndpoint() { return LocalApiGateway.endpoint(); }
@@ -1821,13 +1874,20 @@ public class Main extends XposedModule {
             }
 
             @Override public String readinessDetail() {
-                if (!isLocalApiBackgroundApproved(appContext)) return "后台运行权限未通过校验";
-                if (hostClassLoader == null) return "等待宿主类加载器";
-                if (liveR92 == null && liveQ71 == null) return "等待原生传输与 PoW 初始化";
-                if (liveR92 == null) return "等待原生传输初始化";
-                if (liveQ71 == null) return "等待 PoW 初始化";
-                return "原生传输已就绪（排队 "
-                        + LOCAL_API_COMPLETION_SLOTS.getQueueLength() + "）";
+                if (!isLocalApiBackgroundApproved(appContext)) return UiLanguage.text(
+                        "后台运行权限未通过校验", "Background permission is not approved");
+                if (hostClassLoader == null) return UiLanguage.text(
+                        "等待宿主类加载器", "Waiting for host class loader");
+                if (liveR92 == null && liveQ71 == null) return UiLanguage.text(
+                        "等待原生传输与 PoW 初始化", "Waiting for native transport and PoW");
+                if (liveR92 == null) return UiLanguage.text(
+                        "等待原生传输初始化", "Waiting for native transport");
+                if (liveQ71 == null) return UiLanguage.text(
+                        "等待 PoW 初始化", "Waiting for PoW");
+                return UiLanguage.text(
+                        "原生传输已就绪（排队 " + LOCAL_API_COMPLETION_SLOTS.getQueueLength() + "）",
+                        "Native transport ready (queued "
+                                + LOCAL_API_COMPLETION_SLOTS.getQueueLength() + ")");
             }
 
             @Override public LocalApiGateway.CompletionResult complete(
@@ -2063,24 +2123,33 @@ public class Main extends XposedModule {
             localApiKeepAliveError = "";
             return true;
         } catch (Throwable t) {
-            localApiKeepAliveError = (enabled ? "启动" : "停止")
-                    + "前台保活失败：" + safeThrowableMessage(t);
+            localApiKeepAliveError = UiLanguage.text(
+                    (enabled ? "启动" : "停止") + "前台保活失败：",
+                    (enabled ? "Start" : "Stop") + " foreground keepalive failed: ")
+                    + safeThrowableMessage(t);
             log("local API keepalive control failed enabled=" + enabled + ": " + t);
             return false;
         }
     }
 
     static String localApiKeepAliveStatus() {
-        if (!isLocalApiEnabled()) return "前台保活：未启用";
+        if (!isLocalApiEnabled()) return UiLanguage.text(
+                "前台保活：未启用", "Foreground keepalive: Disabled");
         long heartbeat = localApiKeepAliveHeartbeatAt;
         long age = heartbeat <= 0L ? -1L
                 : Math.max(0L, SystemClock.elapsedRealtime() - heartbeat);
         if (age >= 0L && age <= 15_000L) {
-            return "前台保活：✓ 已连接（最近心跳 " + Math.max(0L, age / 1000L) + " 秒前）";
+            return UiLanguage.text(
+                    "前台保活：✓ 已连接（最近心跳 "
+                            + Math.max(0L, age / 1000L) + " 秒前）",
+                    "Foreground keepalive: ✓ Connected (last heartbeat "
+                            + Math.max(0L, age / 1000L) + "s ago)");
         }
         String error = localApiKeepAliveError;
-        if (error != null && error.length() > 0) return "前台保活：✗ " + error;
-        return "前台保活：正在等待 DeepSeek 心跳";
+        if (error != null && error.length() > 0) return UiLanguage.text(
+                "前台保活：✗ ", "Foreground keepalive: ✗ ") + error;
+        return UiLanguage.text("前台保活：正在等待 DeepSeek 心跳",
+                "Foreground keepalive: waiting for a DeepSeek heartbeat");
     }
 
     /**
@@ -2093,8 +2162,8 @@ public class Main extends XposedModule {
         long now = System.currentTimeMillis();
         if (now - activationHeartbeatAttemptAt < 60_000L) return;
         activationHeartbeatAttemptAt = now;
+        Bundle extras = new Bundle();
         try {
-            Bundle extras = new Bundle();
             extras.putString("package", act.getPackageName());
             try {
                 android.content.pm.PackageInfo info = act.getPackageManager()
@@ -2111,9 +2180,27 @@ public class Main extends XposedModule {
                 activationHeartbeatLogged = true;
                 log("activation heartbeat accepted by module provider");
             }
+            if (accepted) return;
         } catch (Throwable t) {
             if (!activationHeartbeatLogged) {
                 log("activation heartbeat unavailable: " + t);
+            }
+        }
+        // An unmodified host manifest cannot name a module installed later in its package-
+        // visibility queries. Explicit components remain addressable, and the receiver validates
+        // the real sender UID before recording the heartbeat.
+        try {
+            Intent fallback = new Intent(XposedActivationReceiver.ACTION);
+            fallback.setClassName(SELF, XposedActivationReceiver.class.getName());
+            fallback.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+            fallback.putExtras(extras);
+            act.sendBroadcast(fallback);
+            if (!activationHeartbeatLogged) {
+                log("activation heartbeat dispatched through explicit broadcast fallback");
+            }
+        } catch (Throwable t) {
+            if (!activationHeartbeatLogged) {
+                log("activation heartbeat broadcast unavailable: " + t);
             }
         }
     }
@@ -4689,7 +4776,7 @@ public class Main extends XposedModule {
         act.runOnUiThread(new Runnable() {
             @Override public void run() {
                 try {
-                    String msg =
+                    String msgZh =
                         "本模块（Deekseep）通过 Xposed 框架修改 DeepSeek 的运行行为，使用前请知悉：\n\n"
                         + "• 账号与协议风险：修改客户端、系统提示词、专家模式和回复处理可能违反服务条款，"
                         + "账号可能被限制；宿主升级或混淆变化也可能使功能失效。\n"
@@ -4713,8 +4800,24 @@ public class Main extends XposedModule {
                         + "• 风险自担与合法使用：功能仅供本人学习、研究和数据管理，请勿用于未授权账号、违法或"
                         + "恶意用途；因使用本模块产生的后果由使用者承担。\n\n"
                         + "点击“同意”表示你已阅读并接受上述风险；点击“拒绝”将退出 DeepSeek。";
-                    DeekseepUi.showCustomConfirm(act, "Deekseep 免责声明", msg,
-                        "拒绝", "同意", false,
+                    String msgEn =
+                        "This module (Deekseep) changes DeepSeek runtime behavior through the Xposed framework. Before using it, understand the following:\n\n"
+                        + "• Account and terms risk: modifying the client, system prompts, expert mode, or response handling may violate service terms and may restrict your account. Host updates or obfuscation changes can also break features.\n"
+                        + "• Chat-data risk: editing, creating, or deleting chats directly changes the local database and host memory. Cloud synchronization can overwrite data or create conflicts. Back up first and do not test initially on critical data.\n"
+                        + "• Response-preservation limits: the module can only try to preserve original responses observed on this device. It cannot change server rules or recover content replaced before the feature was enabled.\n"
+                        + "• Images and expert relay: gallery images are copied into DeepSeek private storage. Expert-mode images may be sent to a vision service for description before that description is passed to the expert model. Accuracy and continued availability are not guaranteed.\n"
+                        + "• Multi-account credentials: account slots store complete sign-in credentials. Exported TXT files contain plaintext JSON and may allow anyone holding them to use your account. Import validation sends candidate tokens to an official DeepSeek endpoint. Never share exports and delete them promptly.\n"
+                        + "• Regional sign-in unlocks: Google, WeChat, and phone options only restore native host entries hidden by region. Credentials still use DeepSeek's native official sign-in flow. The module does not bypass server region, account, or risk restrictions and cannot guarantee sign-in.\n"
+                        + "• Local API: enabling it requires unrestricted DeepSeek battery use and background activity, increasing power consumption. The service listens on local and LAN addresses inside the DeepSeek process, authenticates with an API key, supports OpenAI or Anthropic formats, and creates or reuses API-only server chats hidden from the UI until the service is disabled. Any local program that obtains the key can consume account quota and submit content.\n"
+                        + "• Agent tool risk: the local API can convert model output into function, shell, apply_patch, and other tool calls. Execution is controlled by the Codex/Agent workspace, sandbox, and authorization policy. Incorrect arguments may modify files or run commands; keep client confirmation and permission isolation enabled.\n"
+                        + "• File and log privacy: Markdown exports, database backups, and account exports may be readable by other apps or file managers. Server diagnostic logs may contain chats, response events, and errors.\n"
+                        + "• Responsibility and lawful use: use these features only for your own learning, research, and data management. Do not use unauthorized accounts or for illegal or malicious purposes. You accept responsibility for the consequences.\n\n"
+                        + "Selecting “Agree” confirms that you have read and accepted these risks. Selecting “Decline” exits DeepSeek.";
+                    DeekseepUi.showCustomConfirm(act,
+                        UiLanguage.text(act, "Deekseep 免责声明", "Deekseep Disclaimer"),
+                        UiLanguage.text(act, msgZh, msgEn),
+                        UiLanguage.text(act, "拒绝", "Decline"),
+                        UiLanguage.text(act, "同意", "Agree"), false,
                         new Runnable() {
                             @Override public void run() {
                                 try { act.finishAffinity(); } catch (Throwable ignored) {}
@@ -4743,6 +4846,7 @@ public class Main extends XposedModule {
 
             TextView existing = btn.get();
             if (existing != null && existing.getContext() == act && existing.getParent() != null) {
+                existing.setTextColor(DeekseepUi.isDark(act) ? 0xFFECECEC : 0xFF1A1A1A);
                 existing.setVisibility(View.VISIBLE);
                 return;
             }
@@ -5307,7 +5411,8 @@ public class Main extends XposedModule {
     }
 
     private static boolean serializedMayContainRelayMarker(String json) {
-        return json != null && (json.contains(RELAY_PROMPT_MARKER) || json.contains("\\u3010"));
+        return json != null && (json.contains(RELAY_PROMPT_MARKER)
+                || json.contains(RELAY_PROMPT_MARKER_EN) || json.contains("\\u3010"));
     }
 
     private static boolean fragmentListContainsRelayMarker(List fragments) {
@@ -5317,7 +5422,8 @@ public class Main extends XposedModule {
                     || "REQUEST".equals(String.valueOf(fieldByName(fragment, "a")));
             if (!request) continue;
             Object content = fieldByName(fragment, "c");
-            if (content instanceof String && ((String) content).contains(RELAY_PROMPT_MARKER)) return true;
+            if (content instanceof String && (((String) content).contains(RELAY_PROMPT_MARKER)
+                    || ((String) content).contains(RELAY_PROMPT_MARKER_EN))) return true;
         }
         return false;
     }
@@ -5537,7 +5643,9 @@ public class Main extends XposedModule {
             Object content = fieldByName(fragment, "c");
             if (!(content instanceof String)) continue;
             String text = (String) content;
-            int idx = text.indexOf(RELAY_PROMPT_MARKER);
+            int zhIndex = text.indexOf(RELAY_PROMPT_MARKER);
+            int enIndex = text.indexOf(RELAY_PROMPT_MARKER_EN);
+            int idx = zhIndex < 0 ? enIndex : (enIndex < 0 ? zhIndex : Math.min(zhIndex, enIndex));
             if (idx < 0) continue;
             String kept = text.substring(0, idx);
             kept = stripInjectedSystemPrompt(kept);
@@ -5757,7 +5865,7 @@ public class Main extends XposedModule {
             if (visionReq == null) { extLog("[RELAY]" + label + " clone 失败；abort"); return null; }
             setFieldByName(visionReq, "a", sid);
             setFieldByName(visionReq, "b", null);
-            setFieldByName(visionReq, "c", VISION_DESCRIBE_PROMPT);
+            setFieldByName(visionReq, "c", visionDescribePrompt());
             setFieldByName(visionReq, "i", "vision");
             setFieldByName(visionReq, "e", Boolean.FALSE);
             setFieldByName(visionReq, "f", Boolean.FALSE);
@@ -5849,7 +5957,7 @@ public class Main extends XposedModule {
             Object cOld = fieldByName(expertReq, "c");
             Object dOld = fieldByName(expertReq, "d");
             ArrayList filesOld = dOld instanceof List ? new ArrayList((List) dOld) : null;
-            String newC = String.valueOf(cOld) + "\n\n" + RELAY_PROMPT_MARKER + "\n" + desc.trim();
+            String newC = String.valueOf(cOld) + "\n\n" + relayPromptMarker() + "\n" + desc.trim();
             setFieldByName(expertReq, "c", newC);
             if (dOld instanceof java.util.List) {
                 try { ((java.util.List) dOld).clear(); }

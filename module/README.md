@@ -2,13 +2,13 @@
 
 This is the recommended Deekseep project for a current LSPosed installation.
 
-Current release: **1.7.1**.
+Current release: **1.7.2**.
 
 - Package: `com.dsmod.probe`
 - Interface: libxposed API 102
 - Metadata: `META-INF/xposed/`
 - Output: `ds-probe.apk`
-- Public asset: `deekseep-stable-api102-v1.7.1.apk`
+- Public asset: `deekseep-stable-api102-v1.7.2.apk`
 
 It contains the broadest maintained stable feature set, including the advanced
 chat editor with live refresh, persistent blank local conversations, direct
@@ -36,7 +36,7 @@ Anthropic message/thinking events begin only after native upstream collection st
 Responses additionally tracks Codex thread/session metadata, emits current `phase`, `end_turn`,
 and custom-tool status fields, and keeps encrypted transport items out of model context.
 
-The traditional 1.7.1 APK compiles this same canonical feature core through
+The traditional 1.7.2 APK compiles this same canonical feature core through
 `module-legacy/compat`; the former test editions are no longer published.
 
 ```bash

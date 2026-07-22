@@ -99,6 +99,7 @@ final class AccountUi {
         activeDialog = new WeakReference<>(dlg);
         activeContent = new WeakReference<>(content);
 
+        UiLanguage.localizeTree(act, root);
         dlg.setContentView(root);
         Window w = dlg.getWindow();
         if (w != null) {
@@ -206,6 +207,7 @@ final class AccountUi {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         hlp.topMargin = dp(act, 12);
         content.addView(hint, hlp);
+        UiLanguage.localizeTree(act, content);
     }
 
     private static View accountRow(final Activity act, final Dialog dlg,
@@ -285,7 +287,7 @@ final class AccountUi {
         row.setOnLongClickListener(new View.OnLongClickListener() {
             public boolean onLongClick(View v) {
                 if (a.current) {
-                    Toast.makeText(act, "不能移除当前登录账号", Toast.LENGTH_SHORT).show();
+                    UiLanguage.toast(act, "不能移除当前登录账号", Toast.LENGTH_SHORT).show();
                     return true;
                 }
                 confirmRemove(act, dlg, a);
@@ -305,7 +307,7 @@ final class AccountUi {
                         showResult(act, "切换失败", "无法写入 DeepSeek 登录态，未执行重启。");
                         return;
                     }
-                    Toast.makeText(act, "正在切换…", Toast.LENGTH_SHORT).show();
+                    UiLanguage.toast(act, "正在切换…", Toast.LENGTH_SHORT).show();
                     AccountManager.restartApp(act);
                 }
         });
@@ -323,7 +325,7 @@ final class AccountUi {
                         showResult(act, "操作失败", "无法清除当前登录态，未执行重启。");
                         return;
                     }
-                    Toast.makeText(act, "正在进入登录页…", Toast.LENGTH_SHORT).show();
+                    UiLanguage.toast(act, "正在进入登录页…", Toast.LENGTH_SHORT).show();
                     AccountManager.restartApp(act);
                 }
         });
@@ -337,7 +339,7 @@ final class AccountUi {
                 "取消", "移除", true, null, new Runnable() {
                     public void run() {
                     if (AccountManager.removeSlot(a.id)) {
-                        Toast.makeText(act, "已移除", Toast.LENGTH_SHORT).show();
+                        UiLanguage.toast(act, "已移除", Toast.LENGTH_SHORT).show();
                         refreshOpen(act);
                     } else {
                         showResult(act, "移除失败", "账号槽文件未能更新，请稍后重试。");
@@ -426,7 +428,8 @@ final class AccountUi {
             LinearLayout labels = new LinearLayout(act);
             labels.setOrientation(LinearLayout.VERTICAL);
             TextView name = new TextView(act);
-            name.setText(account.label + (account.current ? "  · 当前" : ""));
+            name.setText(account.label + (account.current
+                    ? UiLanguage.text(act, "  · 当前", "  · Current") : ""));
             name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
             name.setTextColor(text);
             labels.addView(name);
@@ -473,7 +476,7 @@ final class AccountUi {
         export.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 if (selected.isEmpty()) {
-                    Toast.makeText(act, "请至少勾选一个账号", Toast.LENGTH_SHORT).show();
+                    UiLanguage.toast(act, "请至少勾选一个账号", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 List<AccountCredentialCodec.Entry> entries = new ArrayList<>();
@@ -506,6 +509,7 @@ final class AccountUi {
         bRow.topMargin = dp(act, 14);
         root.addView(buttons, bRow);
 
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         dialog.show();
         Window window = dialog.getWindow();
@@ -522,7 +526,9 @@ final class AccountUi {
 
     private static void setCheckedGlyph(TextView view, boolean checked) {
         view.setText(checked ? "●" : "○");
-        view.setContentDescription(checked ? "已选择" : "未选择");
+        view.setContentDescription(UiLanguage.text(view.getContext(),
+                checked ? "已选择" : "未选择",
+                checked ? "Selected" : "Not selected"));
     }
 
     private static void openExportDestination(Activity act, String fileName) {
@@ -672,7 +678,7 @@ final class AccountUi {
 
         void update(Activity act, final String value) {
             act.runOnUiThread(new Runnable() {
-                public void run() { message.setText(value); }
+                public void run() { message.setText(UiLanguage.dynamic(message.getContext(), value)); }
             });
         }
 
@@ -695,11 +701,12 @@ final class AccountUi {
         title.setTextColor(dark ? 0xFFECECEC : 0xFF1A1A1A);
         root.addView(title);
         TextView message = new TextView(act);
-        message.setText(value);
+        message.setText(UiLanguage.dynamic(act, value));
         message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         message.setTextColor(dark ? 0xFFB0B0B4 : 0xFF666666);
         message.setPadding(0, dp(act, 12), 0, 0);
         root.addView(message);
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         dialog.show();
         Window window = dialog.getWindow();
@@ -759,7 +766,7 @@ final class AccountUi {
     private static TextView actionButton(Activity act, String label, int textColor,
                                          int backgroundColor, int strokeColor) {
         TextView button = new TextView(act);
-        button.setText(label);
+        button.setText(UiLanguage.dynamic(act, label));
         button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         button.setTypeface(Typeface.DEFAULT_BOLD);
         button.setTextColor(textColor);

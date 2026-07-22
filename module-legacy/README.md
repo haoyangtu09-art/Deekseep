@@ -1,9 +1,9 @@
 # Stable Traditional-Xposed Build
 
-This project produces `deekseep-stable-legacy-v1.7.1.apk` for traditional
+This project produces `deekseep-stable-legacy-v1.7.2.apk` for traditional
 Xposed API 82+ environments.
 
-The 1.7.1 legacy APK does not maintain a second feature fork. `build.sh`
+The 1.7.2 legacy APK does not maintain a second feature fork. `build.sh`
 compiles the canonical sources under `../module/src/com/dsmod/probe`, generates
 a traditional `handleLoadPackage` entry from canonical `Main.java`, and bridges
 its around-hook contract through `compat/LegacyXposedModule.java`.
@@ -19,5 +19,5 @@ bash test-adapter-regression.sh
 ```
 
 The unrenamed output is `ds-probe-legacy.apk`. Use `scripts/build-all.sh` from
-the repository root to produce the signed 1.7.1 release filenames, run the
+the repository root to produce the signed 1.7.2 release filenames, run the
 canonical regressions and verify both stable APK layouts.
