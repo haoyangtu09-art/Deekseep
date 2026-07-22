@@ -12,14 +12,14 @@ release and must not be assumed compatible with a later Play Store update.
 - Minimum SDK: `32`
 - Source APKS SHA-256:
   `f9a3f7c313c39a4e825f996b2bd562a408f318c5d7a8e480cf2e6883e44399b3`
-- Current module test build: `1.7.1-gplay.5` (`versionCode 35`)
+- Current module build: `1.7.2` (`versionCode 36`)
 
 No DeepSeek APK, account material, device log, or decompiled source is included
 in this repository.
 
 ## Restored and verified
 
-| Area | `1.7.1-gplay.5` evidence |
+| Area | `1.7.2` evidence |
 |---|---|
 | Settings and Experimental Features | Native entry loads; first-entry disclaimer and nested pages render. |
 | Expert mode | Expert selection is accepted by the native composer and the expert request path completes. |

@@ -209,8 +209,11 @@ public final class LocalApiKeepAliveService extends Service {
                 getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) return;
         NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
-                "DeepSeek 本地 API", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("保持本地 API 与 SSE 流在后台可用");
+                UiLanguage.text(this, "DeepSeek 本地 API", "DeepSeek Local API"),
+                NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription(UiLanguage.text(this,
+                "保持本地 API 与 SSE 流在后台可用",
+                "Keeps the local API and SSE streams available in the background"));
         channel.setShowBadge(false);
         manager.createNotificationChannel(channel);
     }
@@ -227,8 +230,11 @@ public final class LocalApiKeepAliveService extends Service {
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
         builder.setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentTitle("DeepSeek 本地 API 正在运行")
-                .setContentText("正在保持后台监听与流式响应稳定")
+                .setContentTitle(UiLanguage.text(this,
+                        "DeepSeek 本地 API 正在运行", "DeepSeek Local API is running"))
+                .setContentText(UiLanguage.text(this,
+                        "正在保持后台监听与流式响应稳定",
+                        "Keeping background listening and streaming responses stable"))
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)

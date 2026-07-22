@@ -65,6 +65,14 @@ final class LocalApiGateway {
     static final String PROTOCOL_ANTHROPIC = "anthropic";
     private static final String PROTOCOL_FILE_NAME = "deekseep_local_api_protocol";
     private static final long SSE_HEARTBEAT_MS = 5_000L;
+    /**
+     * Native Flow patches are normally token-sized, but a resumed/cumulative patch can contain
+     * several KiB.  Keep those exceptional patches incremental on the loopback socket instead of
+     * handing a UI one giant JSON event.  The tiny pause is used only between slices of one large
+     * upstream patch; normal model deltas are forwarded without added latency.
+     */
+    private static final int LIVE_SSE_SLICE_CHARS = 96;
+    private static final long LIVE_SSE_SLICE_PACE_MS = 5L;
     private static final Object LOCK = new Object();
 
     interface Backend {
@@ -431,16 +439,23 @@ final class LocalApiGateway {
 
     static String connectionInfo() {
         Backend b = backend;
-        String state = isRunning() ? "运行中" : "未运行";
-        String ready = b == null ? "后端未安装"
-                : b.readinessDetail();
+        String state = isRunning()
+                ? UiLanguage.text("运行中", "Running")
+                : UiLanguage.text("未运行", "Not running");
+        String ready = b == null ? UiLanguage.text("后端未安装", "Backend not installed")
+                : UiLanguage.dynamic(b.readinessDetail());
         String protocol = PROTOCOL_ANTHROPIC.equals(protocolMode) ? "Anthropic" : "OpenAI";
         String lan = lanEndpoint();
-        return "状态：" + state + "（" + ready + "）\n当前格式：" + protocol
-                + "\n本机地址：" + endpoint()
-                + (lan == null ? "\n局域网地址：连接 Wi-Fi 后自动显示"
-                        : "\n局域网地址：" + lan)
-                + "\nAPI 密钥：" + (apiKey == null ? "启动后生成" : apiKey);
+        return UiLanguage.text("状态：", "Status: ") + state
+                + UiLanguage.text("（", " (") + ready + UiLanguage.text("）", ")")
+                + UiLanguage.text("\n当前格式：", "\nCurrent format: ") + protocol
+                + UiLanguage.text("\n本机地址：", "\nLocal address: ") + endpoint()
+                + (lan == null
+                        ? UiLanguage.text("\n局域网地址：连接 Wi-Fi 后自动显示",
+                                "\nLAN address: shown automatically after Wi-Fi connects")
+                        : UiLanguage.text("\n局域网地址：", "\nLAN address: ") + lan)
+                + UiLanguage.text("\nAPI 密钥：", "\nAPI key: ")
+                + (apiKey == null ? UiLanguage.text("启动后生成", "Generated on start") : apiKey);
     }
 
     static String rotateKey(Context context) {
@@ -460,15 +475,19 @@ final class LocalApiGateway {
     static String setCustomKey(Context context, String candidate) {
         synchronized (LOCK) {
             Context c = context == null ? appContext : context.getApplicationContext();
-            if (c == null) return "DeepSeek 上下文尚未就绪";
+            if (c == null) return UiLanguage.text(
+                    "DeepSeek 上下文尚未就绪", "DeepSeek context is not ready");
             String value = candidate == null ? "" : candidate.trim();
             if (value.length() < 8 || value.length() > 256) {
-                return "API Key 长度必须为 8 到 256 个字符";
+                return UiLanguage.text(c, "API Key 长度必须为 8 到 256 个字符",
+                        "API key length must be between 8 and 256 characters");
             }
             for (int i = 0; i < value.length(); i++) {
                 char ch = value.charAt(i);
                 if (ch <= 0x20 || ch >= 0x7f) {
-                    return "API Key 只能包含不带空格的可打印 ASCII 字符";
+                    return UiLanguage.text(c,
+                            "API Key 只能包含不带空格的可打印 ASCII 字符",
+                            "API key may contain only printable ASCII characters without spaces");
                 }
             }
             apiKey = value;
@@ -489,25 +508,38 @@ final class LocalApiGateway {
             reasons.append("• ").append(entry.getKey()).append(" × ")
                     .append(entry.getValue().get());
         }
-        if (reasons.length() == 0) reasons.append("无");
-        return "监听状态：" + (isRunning() ? "运行中" : "已停止")
-                + "\n协议格式：" + (PROTOCOL_ANTHROPIC.equals(protocolMode)
+        if (reasons.length() == 0) reasons.append(UiLanguage.text("无", "None"));
+        return UiLanguage.text("监听状态：", "Listener: ")
+                + (isRunning() ? UiLanguage.text("运行中", "Running")
+                        : UiLanguage.text("已停止", "Stopped"))
+                + UiLanguage.text("\n协议格式：", "\nProtocol: ")
+                + (PROTOCOL_ANTHROPIC.equals(protocolMode)
                         ? "Anthropic Messages" : "OpenAI Chat / Responses")
-                + "\n原生后端：" + (b == null ? "未安装" : b.readinessDetail())
-                + "\n收到请求：" + receivedRequests.get()
-                + "\n成功请求：" + successfulRequests.get()
-                + "\n失败请求：" + failedRequests.get()
-                + "\n客户端中断：" + cancelledRequests.get()
-                + "\n已返回工具调用：" + emittedToolCalls.get()
-                + "\nResponses 延续状态：" + RESPONSE_STATES.size()
-                + "\nHTTP 工作线程：" + (pool == null ? 0 : pool.getActiveCount())
-                + "（排队 " + (pool == null ? 0 : pool.getQueue().size()) + "）"
-                + "\n局域网入口：" + (lanEndpoint() == null ? "未检测到 Wi-Fi 地址"
+                + UiLanguage.text("\n原生后端：", "\nNative backend: ")
+                + (b == null ? UiLanguage.text("未安装", "Not installed")
+                        : UiLanguage.dynamic(b.readinessDetail()))
+                + UiLanguage.text("\n收到请求：", "\nRequests received: ") + receivedRequests.get()
+                + UiLanguage.text("\n成功请求：", "\nSuccessful requests: ") + successfulRequests.get()
+                + UiLanguage.text("\n失败请求：", "\nFailed requests: ") + failedRequests.get()
+                + UiLanguage.text("\n客户端中断：", "\nClient disconnects: ") + cancelledRequests.get()
+                + UiLanguage.text("\n已返回工具调用：", "\nTool calls returned: ") + emittedToolCalls.get()
+                + UiLanguage.text("\nResponses 延续状态：", "\nResponses continuation states: ")
+                + RESPONSE_STATES.size()
+                + UiLanguage.text("\nHTTP 工作线程：", "\nHTTP workers: ")
+                + (pool == null ? 0 : pool.getActiveCount())
+                + UiLanguage.text("（排队 ", " (queued ")
+                + (pool == null ? 0 : pool.getQueue().size())
+                + UiLanguage.text("）", ")")
+                + UiLanguage.text("\n局域网入口：", "\nLAN endpoint: ")
+                + (lanEndpoint() == null ? UiLanguage.text(
+                        "未检测到 Wi-Fi 地址", "No Wi-Fi address detected")
                         : lanEndpoint())
-                + "\n最近路由：" + lastRoute
-                + "\n最近失败：" + lastFailure
-                + "\n失败原因统计：\n" + reasons
-                + "\n详细日志：" + LOG_FILE;
+                + UiLanguage.text("\n最近路由：", "\nLatest route: ")
+                + UiLanguage.dynamic(lastRoute)
+                + UiLanguage.text("\n最近失败：", "\nLatest failure: ")
+                + UiLanguage.dynamic(lastFailure)
+                + UiLanguage.text("\n失败原因统计：\n", "\nFailure reasons:\n") + reasons
+                + UiLanguage.text("\n详细日志：", "\nDetailed log: ") + LOG_FILE;
     }
 
     /** Keep native transport diagnostics beside the HTTP log for one-stop debugging. */
@@ -742,47 +774,16 @@ final class LocalApiGateway {
         final SseHeartbeat heartbeat = new SseHeartbeat(out, "openai-chat", id);
         writeChatChunk(out, id, request.requestedModel, "assistant", null, null);
         heartbeat.start();
-        final boolean[] disconnected = {false};
-        DeltaSink sink = new DeltaSink() {
-            @Override public boolean onText(String delta) {
-                if (disconnected[0] || heartbeat.isDisconnected()) return false;
-                try {
-                    writeChatChunk(out, id, request.requestedModel, null, delta, null);
-                    return true;
-                } catch (Throwable t) {
-                    disconnected[0] = true;
-                    return false;
-                }
-            }
-
-            @Override public boolean onReasoning(String delta) {
-                if (disconnected[0] || heartbeat.isDisconnected()) return false;
-                try {
-                    writeChatReasoningChunk(out, id, request.requestedModel, delta);
-                    return true;
-                } catch (Throwable t) {
-                    disconnected[0] = true;
-                    return false;
-                }
-            }
-
-            @Override public boolean isCancelled() {
-                return disconnected[0] || heartbeat.isDisconnected();
-            }
-        };
+        OpenAiChatStreamEmitter emitter = new OpenAiChatStreamEmitter(
+                out, request, heartbeat);
         try {
-            CompletionResult result = completeOpenAiRequest(request,
-                    request.toolsActive() ? null : sink);
-            if (!disconnected[0]) {
-                if (request.toolsActive()) {
-                    if (result.reasoning.length() > 0) {
-                        writeChatReasoningChunk(out, id, request.requestedModel, result.reasoning);
-                    }
-                    if (result.hasToolCalls()) {
-                        writeChatToolCallChunks(out, id, request.requestedModel, result.toolCalls);
-                    } else if (result.text.length() > 0) {
-                        writeBufferedChatText(out, id, request.requestedModel, result.text);
-                    }
+            // Tool-bearing OpenAI clients used to receive a null sink here. That converted every
+            // Agent turn into a buffered response even though the native DeepSeek Flow was live.
+            CompletionResult result = completeOpenAiRequest(request, emitter);
+            if (!emitter.isCancelled()) {
+                emitter.finish(result);
+                if (result.hasToolCalls()) {
+                    writeChatToolCallChunks(out, id, request.requestedModel, result.toolCalls);
                 }
                 writeChatChunk(out, id, request.requestedModel, null, null,
                         result.finishReason);
@@ -793,7 +794,7 @@ final class LocalApiGateway {
                 }
                 writeSseData(out, "[DONE]");
             }
-            if (disconnected[0] || heartbeat.isDisconnected()) {
+            if (emitter.isCancelled()) {
                 apiLog("CHAT_CLIENT_DISCONNECTED id=" + id);
                 recordCancelled("POST /v1/chat/completions", "client disconnected");
                 return;
@@ -804,13 +805,14 @@ final class LocalApiGateway {
             logToolCalls(id, result.toolCalls);
             recordSuccess("POST /v1/chat/completions");
         } catch (Throwable t) {
-            if (isClientDisconnect(t) || disconnected[0] || heartbeat.isDisconnected()) {
+            if (isClientDisconnect(t) || emitter.isCancelled()) {
                 apiLog("CHAT_CLIENT_DISCONNECTED id=" + id);
                 recordCancelled("POST /v1/chat/completions", "client disconnected");
                 return;
             }
-            if (!disconnected[0]) {
+            if (!emitter.isCancelled()) {
                 GatewayException error = asGatewayException(t);
+                try { emitter.abort(); } catch (Throwable ignored) {}
                 writeSseData(out, errorObject(error.type, error.code,
                         error.getMessage()).toString());
                 writeSseData(out, "[DONE]");
@@ -863,8 +865,11 @@ final class LocalApiGateway {
                 new JSONObject().put("response", created));
         if (request.toolsActive()) {
             heartbeat.start();
+            ResponsesReasoningStreamEmitter emitter = new ResponsesReasoningStreamEmitter(
+                    out, request, sequence, heartbeat);
             try {
-                handleBufferedResponsesStream(out, id, messageId, request, sequence, heartbeat);
+                handleBufferedResponsesStream(out, id, messageId, request, sequence,
+                        heartbeat, emitter);
             } finally {
                 heartbeat.stop();
             }
@@ -887,9 +892,14 @@ final class LocalApiGateway {
                 if (disconnected[0] || heartbeat.isDisconnected()) return false;
                 try {
                     streamedText.append(delta);
-                    writeResponseEvent(out, "response.output_text.delta", ++sequence[0],
-                            new JSONObject().put("item_id", messageId).put("output_index", 0)
-                                    .put("content_index", 0).put("delta", delta));
+                    List<String> slices = stringChunks(delta, LIVE_SSE_SLICE_CHARS);
+                    for (int index = 0; index < slices.size(); index++) {
+                        writeResponseEvent(out, "response.output_text.delta", ++sequence[0],
+                                new JSONObject().put("item_id", messageId).put("output_index", 0)
+                                        .put("content_index", 0)
+                                        .put("delta", slices.get(index)));
+                        paceLargeSsePatch(slices.size(), index);
+                    }
                     return true;
                 } catch (Throwable t) {
                     disconnected[0] = true;
@@ -1033,6 +1043,482 @@ final class LocalApiGateway {
         writeJson(out, 200, new JSONObject().put("input_tokens",
                 approximateTokens(request.prompt)));
         recordSuccess("POST /v1/messages/count_tokens");
+    }
+
+    /**
+     * OpenAI Chat streaming adapter with a real upstream lifecycle.
+     *
+     * <p>The first non-role delta is a {@code reasoning_content} {@code <think>} marker, but it is
+     * emitted only after the native Flow has actually been entered.  This gives OpenCode an
+     * immediate reasoning event without claiming the model is thinking while the request is still
+     * queued or preparing PoW.  Tool-bearing turns keep only possible private tool syntax buffered;
+     * ordinary reasoning and answer text continue over SSE as native deltas arrive.</p>
+     */
+    private static final class OpenAiChatStreamEmitter implements DeltaSink {
+        private static final int INITIAL_AGENT_TEXT_GUARD = 128;
+        private final OutputStream out;
+        private final CompletionRequest request;
+        private final SseHeartbeat heartbeat;
+        private final boolean guardToolMarkup;
+        private final boolean guardWorkspaceMutation;
+        private final StringBuilder rawText = new StringBuilder();
+        private final StringBuilder observedReasoning = new StringBuilder();
+        private final StringBuilder pendingText = new StringBuilder();
+        private final StringBuilder pendingReasoning = new StringBuilder();
+        private boolean generationStarted;
+        private boolean streamStarted;
+        private boolean thinkingOpen;
+        private boolean textToolSuppressed;
+        private boolean reasoningToolSuppressed;
+        private boolean generationTextEmitted;
+        private boolean upstreamSatisfied;
+        private boolean terminal;
+        private volatile boolean disconnected;
+
+        OpenAiChatStreamEmitter(OutputStream out, CompletionRequest request,
+                                SseHeartbeat heartbeat) {
+            this.out = out;
+            this.request = request;
+            this.heartbeat = heartbeat;
+            this.guardToolMarkup = request != null && request.toolsActive();
+            this.guardWorkspaceMutation = requiresWorkspaceFileAction(request);
+        }
+
+        @Override public synchronized void onUpstreamStarted() {
+            if (isCancelled()) return;
+            try {
+                startGenerationIfNeeded();
+            } catch (Throwable t) {
+                disconnected = true;
+            }
+        }
+
+        @Override public synchronized boolean onText(String delta) {
+            if (delta == null || delta.length() == 0) return !isCancelled();
+            if (isCancelled()) return false;
+            try {
+                startGenerationIfNeeded();
+                flushReasoningPending(true);
+                rawText.append(delta);
+                if (!guardToolMarkup) {
+                    emitTextValue(delta);
+                } else if (!textToolSuppressed) {
+                    pendingText.append(delta);
+                    drainTextPending(false);
+                }
+                if (guardToolMarkup && !upstreamSatisfied
+                        && OpenAiToolBridge.resemblesCallSyntax(
+                                rawText.toString(), request.toolPlan)
+                        && !OpenAiToolBridge.parseCalls(rawText.toString(), request.toolPlan)
+                                .isEmpty()) {
+                    upstreamSatisfied = true;
+                }
+                return true;
+            } catch (Throwable t) {
+                disconnected = true;
+                return false;
+            }
+        }
+
+        @Override public synchronized boolean onReasoning(String delta) {
+            if (delta == null || delta.length() == 0) return !isCancelled();
+            if (isCancelled()) return false;
+            try {
+                startGenerationIfNeeded();
+                observedReasoning.append(delta);
+                if (!guardToolMarkup) {
+                    emitReasoningValue(delta);
+                } else if (!reasoningToolSuppressed) {
+                    pendingReasoning.append(delta);
+                    drainReasoningPending(false);
+                }
+                return true;
+            } catch (Throwable t) {
+                disconnected = true;
+                return false;
+            }
+        }
+
+        @Override public boolean isCancelled() {
+            return disconnected || heartbeat.isDisconnected();
+        }
+
+        @Override public boolean isSatisfied() { return upstreamSatisfied; }
+
+        synchronized boolean hasSuppressedToolMarkup() {
+            return textToolSuppressed || reasoningToolSuppressed;
+        }
+
+        synchronized void finish(CompletionResult result) throws Exception {
+            if (result == null) result = new CompletionResult("", "", "stop");
+            startGenerationIfNeeded();
+            emitMissingReasoning(result.reasoning);
+            flushReasoningPending(true);
+
+            if (result.hasToolCalls()) {
+                // Never leak the model's textual tool envelope. The caller emits only validated
+                // OpenAI delta.tool_calls after the reasoning boundary is closed.
+                pendingText.setLength(0);
+                closeThinkingMarker();
+            } else {
+                String finalText = result.text == null ? "" : result.text;
+                String observed = rawText.toString();
+                if (observed.length() == 0 && finalText.length() > 0) {
+                    if (!onText(finalText)) throw disconnectedDuring("answer stream");
+                } else if (finalText.startsWith(observed)
+                        && finalText.length() > observed.length()) {
+                    if (!onText(finalText.substring(observed.length()))) {
+                        throw disconnectedDuring("answer stream");
+                    }
+                } else if (!generationTextEmitted && !textToolSuppressed
+                        && finalText.length() > 0 && !finalText.equals(observed)) {
+                    pendingText.setLength(0);
+                    rawText.setLength(0);
+                    if (!onText(finalText)) throw disconnectedDuring("answer stream");
+                }
+                if (textToolSuppressed || (guardToolMarkup
+                        && OpenAiToolBridge.resemblesCallSyntax(
+                                finalText, request.toolPlan))) {
+                    throw new GatewayException(502, "unparsed_tool_markup", "server_error",
+                            "DeepSeek returned tool markup that could not be validated");
+                }
+                flushTextPending(true);
+                closeThinkingMarker();
+            }
+            terminal = true;
+        }
+
+        /** Reset only attempt-local redaction state before a bounded repair generation. */
+        synchronized void nextGeneration() throws Exception {
+            if (guardToolMarkup && (reasoningToolSuppressed
+                    || OpenAiToolBridge.resemblesCallSyntax(
+                            pendingReasoning.toString(), request.toolPlan))) {
+                pendingReasoning.setLength(0);
+            } else {
+                flushReasoningPending(true);
+            }
+            if (guardToolMarkup && (textToolSuppressed
+                    || OpenAiToolBridge.resemblesCallSyntax(
+                            rawText.toString(), request.toolPlan)
+                    || AnthropicStreamEmitter.possibleToolEnvelopeStart(
+                            pendingText.toString(), request.toolPlan) >= 0)) {
+                pendingText.setLength(0);
+            } else if (!generationTextEmitted) {
+                // A short promise such as “I will write it” belongs to the failed attempt, not the
+                // repaired assistant turn.
+                pendingText.setLength(0);
+            } else {
+                flushTextPending(true);
+            }
+            rawText.setLength(0);
+            pendingText.setLength(0);
+            pendingReasoning.setLength(0);
+            textToolSuppressed = false;
+            reasoningToolSuppressed = false;
+            generationTextEmitted = false;
+            upstreamSatisfied = false;
+            generationStarted = false;
+        }
+
+        synchronized void abort() throws IOException, JSONException {
+            if (thinkingOpen) closeThinkingMarker();
+            terminal = true;
+        }
+
+        private void startGenerationIfNeeded() throws IOException, JSONException {
+            if (generationStarted || terminal) return;
+            generationStarted = true;
+            if (!thinkingOpen) {
+                thinkingOpen = true;
+                writePacedChatReasoning(out, request.requestId,
+                        request.requestedModel, "<think>\n");
+            }
+            if (!streamStarted) {
+                streamStarted = true;
+                apiLog("OPENAI_CHAT_UPSTREAM_READY id=" + request.requestId);
+            }
+        }
+
+        private void closeThinkingMarker() throws IOException, JSONException {
+            if (!thinkingOpen) return;
+            writePacedChatReasoning(out, request.requestId,
+                    request.requestedModel, "\n</think>");
+            thinkingOpen = false;
+        }
+
+        private void emitMissingReasoning(String complete) throws Exception {
+            if (complete == null || complete.length() == 0) return;
+            String seen = observedReasoning.toString();
+            String missing = complete.startsWith(seen) ? complete.substring(seen.length())
+                    : (seen.length() == 0 ? complete : "");
+            if (missing.length() > 0 && !onReasoning(missing)) {
+                throw disconnectedDuring("reasoning stream");
+            }
+        }
+
+        private void emitTextValue(String value) throws IOException, JSONException {
+            if (value == null || value.length() == 0) return;
+            generationTextEmitted = true;
+            closeThinkingMarker();
+            writePacedChatContent(out, request.requestId, request.requestedModel, value);
+        }
+
+        private void emitReasoningValue(String value) throws IOException, JSONException {
+            if (value == null || value.length() == 0) return;
+            writePacedChatReasoning(out, request.requestId, request.requestedModel, value);
+        }
+
+        private void drainTextPending(boolean atEnd) throws IOException, JSONException {
+            if (pendingText.length() == 0 || textToolSuppressed) return;
+            int envelope = AnthropicStreamEmitter.toolEnvelopeStart(
+                    pendingText.toString(), request.toolPlan);
+            if (envelope >= 0) {
+                pendingText.setLength(0);
+                textToolSuppressed = true;
+                return;
+            }
+            int possible = atEnd ? -1 : AnthropicStreamEmitter.possibleToolEnvelopeStart(
+                    pendingText.toString(), request.toolPlan);
+            int count = possible < 0 ? pendingText.length() : possible;
+            if (!atEnd && guardWorkspaceMutation) count = 0;
+            if (!atEnd && !generationTextEmitted && possible < 0
+                    && AnthropicStreamEmitter.shouldGuardInitialAgentText(
+                            pendingText.toString())) {
+                count = Math.max(0, count - INITIAL_AGENT_TEXT_GUARD);
+            }
+            count = AnthropicStreamEmitter.safeSplitIndex(pendingText, count);
+            if (count <= 0) return;
+            emitTextValue(pendingText.substring(0, count));
+            pendingText.delete(0, count);
+        }
+
+        private void flushTextPending(boolean atEnd) throws IOException, JSONException {
+            if (!guardToolMarkup) return;
+            drainTextPending(atEnd);
+            if (textToolSuppressed) pendingText.setLength(0);
+        }
+
+        private void drainReasoningPending(boolean atEnd) throws IOException, JSONException {
+            if (pendingReasoning.length() == 0 || reasoningToolSuppressed) return;
+            int envelope = AnthropicStreamEmitter.toolEnvelopeStart(
+                    pendingReasoning.toString(), request.toolPlan);
+            if (envelope >= 0) {
+                emitReasoningValue(pendingReasoning.substring(0, envelope));
+                pendingReasoning.setLength(0);
+                reasoningToolSuppressed = true;
+                return;
+            }
+            int possible = atEnd ? -1 : AnthropicStreamEmitter.possibleToolEnvelopeStart(
+                    pendingReasoning.toString(), request.toolPlan);
+            int count = possible < 0 ? pendingReasoning.length() : possible;
+            count = AnthropicStreamEmitter.safeSplitIndex(pendingReasoning, count);
+            if (count <= 0) return;
+            emitReasoningValue(pendingReasoning.substring(0, count));
+            pendingReasoning.delete(0, count);
+        }
+
+        private void flushReasoningPending(boolean atEnd) throws IOException, JSONException {
+            if (!guardToolMarkup) return;
+            drainReasoningPending(atEnd);
+            if (reasoningToolSuppressed) pendingReasoning.setLength(0);
+        }
+
+        private static ClientDisconnectedIOException disconnectedDuring(String phase) {
+            return new ClientDisconnectedIOException(
+                    new IOException("client disconnected during " + phase));
+        }
+    }
+
+    /** Streams a valid Responses reasoning item while tool text remains privately validated. */
+    private static final class ResponsesReasoningStreamEmitter implements DeltaSink {
+        private final OutputStream out;
+        private final CompletionRequest request;
+        private final int[] sequence;
+        private final SseHeartbeat heartbeat;
+        private final String itemId = "rs_" + compactUuid();
+        private final StringBuilder rawText = new StringBuilder();
+        private final StringBuilder observedReasoning = new StringBuilder();
+        private final StringBuilder pendingReasoning = new StringBuilder();
+        private final StringBuilder summary = new StringBuilder();
+        private boolean reasoningToolSuppressed;
+        private boolean upstreamSatisfied;
+        private boolean started;
+        private boolean closed;
+        private volatile boolean disconnected;
+
+        ResponsesReasoningStreamEmitter(OutputStream out, CompletionRequest request,
+                                        int[] sequence, SseHeartbeat heartbeat) {
+            this.out = out;
+            this.request = request;
+            this.sequence = sequence;
+            this.heartbeat = heartbeat;
+        }
+
+        @Override public synchronized void onUpstreamStarted() {
+            if (isCancelled()) return;
+            try {
+                startIfNeeded();
+            } catch (Throwable t) {
+                disconnected = true;
+            }
+        }
+
+        @Override public synchronized boolean onText(String delta) {
+            if (delta == null || delta.length() == 0) return !isCancelled();
+            if (isCancelled()) return false;
+            try {
+                startIfNeeded();
+                rawText.append(delta);
+                if (!upstreamSatisfied && OpenAiToolBridge.resemblesCallSyntax(
+                        rawText.toString(), request.toolPlan)
+                        && !OpenAiToolBridge.parseCalls(rawText.toString(), request.toolPlan)
+                                .isEmpty()) {
+                    upstreamSatisfied = true;
+                }
+                return true;
+            } catch (Throwable t) {
+                disconnected = true;
+                return false;
+            }
+        }
+
+        @Override public synchronized boolean onReasoning(String delta) {
+            if (delta == null || delta.length() == 0) return !isCancelled();
+            if (isCancelled()) return false;
+            try {
+                startIfNeeded();
+                observedReasoning.append(delta);
+                if (!reasoningToolSuppressed) {
+                    pendingReasoning.append(delta);
+                    drainReasoning(false);
+                }
+                return true;
+            } catch (Throwable t) {
+                disconnected = true;
+                return false;
+            }
+        }
+
+        @Override public boolean isCancelled() {
+            return disconnected || heartbeat.isDisconnected();
+        }
+
+        @Override public boolean isSatisfied() { return upstreamSatisfied; }
+
+        synchronized boolean hasSuppressedToolMarkup() {
+            return reasoningToolSuppressed;
+        }
+
+        synchronized void nextGeneration() throws Exception {
+            if (reasoningToolSuppressed || OpenAiToolBridge.resemblesCallSyntax(
+                    pendingReasoning.toString(), request.toolPlan)) {
+                pendingReasoning.setLength(0);
+            } else {
+                drainReasoning(true);
+            }
+            rawText.setLength(0);
+            pendingReasoning.setLength(0);
+            reasoningToolSuppressed = false;
+            upstreamSatisfied = false;
+        }
+
+        synchronized void finish(CompletionResult result) throws Exception {
+            startIfNeeded();
+            String complete = result == null ? "" : result.reasoning;
+            String seen = observedReasoning.toString();
+            String missing = complete != null && complete.startsWith(seen)
+                    ? complete.substring(seen.length())
+                    : (seen.length() == 0 && complete != null ? complete : "");
+            if (missing.length() > 0 && !onReasoning(missing)) {
+                throw new ClientDisconnectedIOException(
+                        new IOException("client disconnected during Responses reasoning"));
+            }
+            drainReasoning(true);
+            closeIfNeeded();
+        }
+
+        synchronized void abort() throws IOException, JSONException {
+            if (started && !closed) closeIfNeeded();
+        }
+
+        synchronized int outputItemCount() { return started ? 1 : 0; }
+
+        synchronized JSONObject completedItem() throws JSONException {
+            JSONObject part = new JSONObject().put("type", "summary_text")
+                    .put("text", summary.toString());
+            return new JSONObject().put("id", itemId).put("type", "reasoning")
+                    .put("status", "completed")
+                    .put("summary", new JSONArray().put(part))
+                    .put("encrypted_content", JSONObject.NULL);
+        }
+
+        private void startIfNeeded() throws IOException, JSONException {
+            if (started) return;
+            started = true;
+            JSONObject item = new JSONObject().put("id", itemId).put("type", "reasoning")
+                    .put("status", "in_progress").put("summary", new JSONArray())
+                    .put("encrypted_content", JSONObject.NULL);
+            writeResponseEvent(out, "response.output_item.added", ++sequence[0],
+                    new JSONObject().put("output_index", 0).put("item", item));
+            writeResponseEvent(out, "response.reasoning_summary_part.added", ++sequence[0],
+                    new JSONObject().put("item_id", itemId).put("output_index", 0)
+                            .put("summary_index", 0).put("part",
+                                    new JSONObject().put("type", "summary_text")
+                                            .put("text", "")));
+            emitReasoning("<think>\n");
+            apiLog("OPENAI_RESPONSES_UPSTREAM_READY id=" + request.requestId);
+        }
+
+        private void closeIfNeeded() throws IOException, JSONException {
+            if (closed) return;
+            emitReasoning("\n</think>");
+            JSONObject part = new JSONObject().put("type", "summary_text")
+                    .put("text", summary.toString());
+            writeResponseEvent(out, "response.reasoning_summary_text.done", ++sequence[0],
+                    new JSONObject().put("item_id", itemId).put("output_index", 0)
+                            .put("summary_index", 0).put("text", summary.toString()));
+            writeResponseEvent(out, "response.reasoning_summary_part.done", ++sequence[0],
+                    new JSONObject().put("item_id", itemId).put("output_index", 0)
+                            .put("summary_index", 0).put("part", part));
+            JSONObject item = new JSONObject().put("id", itemId).put("type", "reasoning")
+                    .put("status", "completed")
+                    .put("summary", new JSONArray().put(part))
+                    .put("encrypted_content", JSONObject.NULL);
+            writeResponseEvent(out, "response.output_item.done", ++sequence[0],
+                    new JSONObject().put("output_index", 0).put("item", item));
+            closed = true;
+        }
+
+        private void emitReasoning(String value) throws IOException, JSONException {
+            if (value == null || value.length() == 0) return;
+            summary.append(value);
+            List<String> slices = stringChunks(value, LIVE_SSE_SLICE_CHARS);
+            for (int index = 0; index < slices.size(); index++) {
+                writeResponseEvent(out, "response.reasoning_summary_text.delta", ++sequence[0],
+                        new JSONObject().put("item_id", itemId).put("output_index", 0)
+                                .put("summary_index", 0).put("delta", slices.get(index)));
+                paceLargeSsePatch(slices.size(), index);
+            }
+        }
+
+        private void drainReasoning(boolean atEnd) throws IOException, JSONException {
+            if (pendingReasoning.length() == 0 || reasoningToolSuppressed) return;
+            int envelope = AnthropicStreamEmitter.toolEnvelopeStart(
+                    pendingReasoning.toString(), request.toolPlan);
+            if (envelope >= 0) {
+                emitReasoning(pendingReasoning.substring(0, envelope));
+                pendingReasoning.setLength(0);
+                reasoningToolSuppressed = true;
+                return;
+            }
+            int possible = atEnd ? -1 : AnthropicStreamEmitter.possibleToolEnvelopeStart(
+                    pendingReasoning.toString(), request.toolPlan);
+            int count = possible < 0 ? pendingReasoning.length() : possible;
+            count = AnthropicStreamEmitter.safeSplitIndex(pendingReasoning, count);
+            if (count <= 0) return;
+            emitReasoning(pendingReasoning.substring(0, count));
+            pendingReasoning.delete(0, count);
+        }
     }
 
     /**
@@ -1305,9 +1791,14 @@ final class LocalApiGateway {
 
         private void emitText(String value) throws IOException, JSONException {
             if (value == null || value.length() == 0) return;
-            writeAnthropicEvent(out, "content_block_delta",
-                    new JSONObject().put("index", textIndex).put("delta",
-                            new JSONObject().put("type", "text_delta").put("text", value)));
+            List<String> slices = stringChunks(value, LIVE_SSE_SLICE_CHARS);
+            for (int index = 0; index < slices.size(); index++) {
+                writeAnthropicEvent(out, "content_block_delta",
+                        new JSONObject().put("index", textIndex).put("delta",
+                                new JSONObject().put("type", "text_delta")
+                                        .put("text", slices.get(index))));
+                paceLargeSsePatch(slices.size(), index);
+            }
         }
 
         private void emitTextValue(String value) throws IOException, JSONException {
@@ -1324,10 +1815,14 @@ final class LocalApiGateway {
             if (value == null || value.length() == 0) return;
             ensureThinkingBlock();
             reasoningBlock.append(value);
-            writeAnthropicEvent(out, "content_block_delta",
-                    new JSONObject().put("index", thinkingIndex).put("delta",
-                            new JSONObject().put("type", "thinking_delta")
-                                    .put("thinking", value)));
+            List<String> slices = stringChunks(value, LIVE_SSE_SLICE_CHARS);
+            for (int index = 0; index < slices.size(); index++) {
+                writeAnthropicEvent(out, "content_block_delta",
+                        new JSONObject().put("index", thinkingIndex).put("delta",
+                                new JSONObject().put("type", "thinking_delta")
+                                        .put("thinking", slices.get(index))));
+                paceLargeSsePatch(slices.size(), index);
+            }
         }
 
         private void closeTextBlock() throws IOException, JSONException {
@@ -1345,11 +1840,14 @@ final class LocalApiGateway {
                             new JSONObject().put("type", "tool_use")
                                     .put("id", anthropicToolId(call)).put("name", call.name)
                                     .put("input", new JSONObject())));
-            for (String delta : stringChunks(call.arguments, 64)) {
+            List<String> argumentSlices = stringChunks(call.arguments, 64);
+            for (int part = 0; part < argumentSlices.size(); part++) {
+                String delta = argumentSlices.get(part);
                 writeAnthropicEvent(out, "content_block_delta",
                         new JSONObject().put("index", index).put("delta",
                                 new JSONObject().put("type", "input_json_delta")
                                         .put("partial_json", delta)));
+                paceLargeSsePatch(argumentSlices.size(), part);
             }
             writeAnthropicEvent(out, "content_block_stop",
                     new JSONObject().put("index", index));
@@ -1622,73 +2120,106 @@ final class LocalApiGateway {
                                                       String messageId,
                                                       CompletionRequest request,
                                                       int[] sequence,
-                                                      SseHeartbeat heartbeat) {
+                                                      SseHeartbeat heartbeat,
+                                                      ResponsesReasoningStreamEmitter emitter) {
         try {
-            CompletionResult result = completeOpenAiRequest(request, null);
+            CompletionResult result = completeOpenAiRequest(request, emitter);
+            if (emitter.isCancelled()) {
+                apiLog("RESPONSES_CLIENT_DISCONNECTED id=" + id);
+                recordCancelled("POST /v1/responses", "client disconnected");
+                return;
+            }
+            emitter.finish(result);
+            int outputOffset = emitter.outputItemCount();
             if (result.hasToolCalls()) {
                 for (int index = 0; index < result.toolCalls.size(); index++) {
                     OpenAiToolBridge.Call call = result.toolCalls.get(index);
+                    int outputIndex = outputOffset + index;
                     JSONObject added = responseToolItem(call, "in_progress", false);
                     writeResponseEvent(out, "response.output_item.added", ++sequence[0],
-                            new JSONObject().put("output_index", index).put("item", added));
+                            new JSONObject().put("output_index", outputIndex).put("item", added));
                     if (OpenAiToolBridge.FUNCTION.equals(call.kind)) {
-                        for (String delta : stringChunks(call.arguments, 192)) {
+                        List<String> slices = stringChunks(
+                                call.arguments, LIVE_SSE_SLICE_CHARS);
+                        for (int part = 0; part < slices.size(); part++) {
+                            String delta = slices.get(part);
                             writeResponseEvent(out, "response.function_call_arguments.delta",
                                     ++sequence[0], new JSONObject().put("item_id", call.itemId)
                                             .put("call_id", call.callId)
-                                            .put("output_index", index).put("delta", delta));
+                                            .put("output_index", outputIndex).put("delta", delta));
+                            paceLargeSsePatch(slices.size(), part);
                         }
                         writeResponseEvent(out, "response.function_call_arguments.done",
                                 ++sequence[0], new JSONObject().put("item_id", call.itemId)
                                         .put("call_id", call.callId)
-                                        .put("output_index", index).put("name", call.name)
+                                        .put("output_index", outputIndex).put("name", call.name)
                                         .put("arguments", call.arguments));
                     } else if (OpenAiToolBridge.CUSTOM.equals(call.kind)) {
                         String input = call.customInput();
-                        for (String delta : stringChunks(input, 192)) {
+                        List<String> slices = stringChunks(input, LIVE_SSE_SLICE_CHARS);
+                        for (int part = 0; part < slices.size(); part++) {
+                            String delta = slices.get(part);
                             writeResponseEvent(out, "response.custom_tool_call_input.delta",
                                     ++sequence[0], new JSONObject().put("item_id", call.itemId)
                                             .put("call_id", call.callId)
-                                            .put("output_index", index).put("delta", delta));
+                                            .put("output_index", outputIndex).put("delta", delta));
+                            paceLargeSsePatch(slices.size(), part);
                         }
                         writeResponseEvent(out, "response.custom_tool_call_input.done",
                                 ++sequence[0], new JSONObject().put("item_id", call.itemId)
                                         .put("call_id", call.callId)
-                                        .put("output_index", index).put("input", input));
+                                        .put("output_index", outputIndex).put("input", input));
                     }
                     writeResponseEvent(out, "response.output_item.done", ++sequence[0],
-                            new JSONObject().put("output_index", index)
+                            new JSONObject().put("output_index", outputIndex)
                                     .put("item", responseToolItem(call, "completed", true)));
                 }
             } else {
                 JSONObject item = outputMessage(messageId, "in_progress", "");
                 writeResponseEvent(out, "response.output_item.added", ++sequence[0],
-                        new JSONObject().put("output_index", 0).put("item", item));
+                        new JSONObject().put("output_index", outputOffset).put("item", item));
                 JSONObject emptyPart = new JSONObject().put("type", "output_text")
                         .put("text", "").put("annotations", new JSONArray());
                 writeResponseEvent(out, "response.content_part.added", ++sequence[0],
-                        new JSONObject().put("item_id", messageId).put("output_index", 0)
+                        new JSONObject().put("item_id", messageId)
+                                .put("output_index", outputOffset)
                                 .put("content_index", 0).put("part", emptyPart));
-                for (String delta : stringChunks(result.text, 192)) {
+                List<String> slices = stringChunks(result.text, LIVE_SSE_SLICE_CHARS);
+                for (int partIndex = 0; partIndex < slices.size(); partIndex++) {
+                    String delta = slices.get(partIndex);
                     writeResponseEvent(out, "response.output_text.delta", ++sequence[0],
-                            new JSONObject().put("item_id", messageId).put("output_index", 0)
+                            new JSONObject().put("item_id", messageId)
+                                    .put("output_index", outputOffset)
                                     .put("content_index", 0).put("delta", delta));
+                    paceLargeSsePatch(slices.size(), partIndex);
                 }
                 writeResponseEvent(out, "response.output_text.done", ++sequence[0],
-                        new JSONObject().put("item_id", messageId).put("output_index", 0)
+                        new JSONObject().put("item_id", messageId)
+                                .put("output_index", outputOffset)
                                 .put("content_index", 0).put("text", result.text));
                 JSONObject part = new JSONObject().put("type", "output_text")
                         .put("text", result.text).put("annotations", new JSONArray());
                 writeResponseEvent(out, "response.content_part.done", ++sequence[0],
-                        new JSONObject().put("item_id", messageId).put("output_index", 0)
+                        new JSONObject().put("item_id", messageId)
+                                .put("output_index", outputOffset)
                                 .put("content_index", 0).put("part", part));
                 writeResponseEvent(out, "response.output_item.done", ++sequence[0],
-                        new JSONObject().put("output_index", 0)
+                        new JSONObject().put("output_index", outputOffset)
                                 .put("item", outputMessage(messageId, "completed", result.text)));
             }
             rememberResponseState(id, request, result);
             JSONObject completed = responseObject(id, messageId, request, result,
                     "completed", true);
+            if (emitter.outputItemCount() > 0) {
+                JSONArray original = completed.optJSONArray("output");
+                JSONArray output = new JSONArray().put(emitter.completedItem());
+                if (original != null) {
+                    for (int index = 0; index < original.length(); index++) {
+                        output.put(original.opt(index));
+                    }
+                }
+                completed.put("output", output);
+            }
             writeResponseEvent(out, "response.completed", ++sequence[0],
                     new JSONObject().put("response", completed));
             apiLog("RESPONSES_OK id=" + id + " stream=true model="
@@ -1705,6 +2236,7 @@ final class LocalApiGateway {
             }
             GatewayException error = asGatewayException(t);
             try {
+                if (emitter != null) emitter.abort();
                 JSONObject failed = responseObject(id, messageId, request,
                         new CompletionResult("", "", "error"), "failed", false);
                 failed.put("error", errorObject(error.type, error.code,
@@ -2549,7 +3081,7 @@ final class LocalApiGateway {
                     + " init=" + isPendingInitRequest(request));
             current = backend.complete(request.withPrompt(agentToolRepairPrompt(
                     request, current, lastDeferred, repair + 1)),
-                    nextAnthropicGeneration(sink));
+                    nextStreamGeneration(sink));
             reasoning.append(current.reasoning);
         }
 
@@ -2574,8 +3106,14 @@ final class LocalApiGateway {
     }
 
     private static boolean suppressedToolMarkup(DeltaSink sink) {
-        return sink instanceof AnthropicStreamEmitter
-                && ((AnthropicStreamEmitter) sink).hasSuppressedToolMarkup();
+        if (sink instanceof AnthropicStreamEmitter) {
+            return ((AnthropicStreamEmitter) sink).hasSuppressedToolMarkup();
+        }
+        if (sink instanceof ResponsesReasoningStreamEmitter) {
+            return ((ResponsesReasoningStreamEmitter) sink).hasSuppressedToolMarkup();
+        }
+        return sink instanceof OpenAiChatStreamEmitter
+                && ((OpenAiChatStreamEmitter) sink).hasSuppressedToolMarkup();
     }
 
     private static String agentToolRepairPrompt(CompletionRequest request,
@@ -2905,7 +3443,7 @@ final class LocalApiGateway {
                 + "only a different tool or different arguments that are genuinely required.\n"
                 + "[/DUPLICATE TOOL CORRECTION]";
         CompletionResult repaired = backend.complete(request.withPrompt(correction),
-                nextAnthropicGeneration(sink));
+                nextStreamGeneration(sink));
         List<OpenAiToolBridge.Call> parsed = OpenAiToolBridge.parseCalls(
                 repaired.text, request.toolPlan);
         if (!parsed.isEmpty()) {
@@ -2927,7 +3465,7 @@ final class LocalApiGateway {
                 + "Do not request or simulate any tool. Complete the task now using those outputs "
                 + "and return only the next assistant answer.\n[/FINAL ANSWER REQUIRED]";
         CompletionResult terminal = backend.complete(request.withPrompt(finalPrompt),
-                nextAnthropicGeneration(sink));
+                nextStreamGeneration(sink));
         if (OpenAiToolBridge.resemblesCallSyntax(
                 terminal.text, request.toolPlan)) {
             // A transport error here makes agent clients retry the entire turn, which asks for
@@ -2937,7 +3475,7 @@ final class LocalApiGateway {
             String fallback = "The requested tool action already completed successfully; "
                     + "the duplicate call was suppressed and was not executed again.";
             apiLog("TOOL_DUPLICATE_TERMINAL_FALLBACK request_id=" + request.requestId);
-            DeltaSink fallbackSink = nextAnthropicGeneration(sink);
+            DeltaSink fallbackSink = nextStreamGeneration(sink);
             if (fallbackSink != null && !fallbackSink.onText(fallback)) {
                 throw new ClientDisconnectedIOException(
                         new IOException("client disconnected during duplicate fallback"));
@@ -2950,10 +3488,20 @@ final class LocalApiGateway {
                 terminal.finishReason);
     }
 
-    private static DeltaSink nextAnthropicGeneration(DeltaSink sink) throws Exception {
-        if (!(sink instanceof AnthropicStreamEmitter)) return null;
-        ((AnthropicStreamEmitter) sink).nextGeneration();
-        return sink;
+    private static DeltaSink nextStreamGeneration(DeltaSink sink) throws Exception {
+        if (sink instanceof AnthropicStreamEmitter) {
+            ((AnthropicStreamEmitter) sink).nextGeneration();
+            return sink;
+        }
+        if (sink instanceof OpenAiChatStreamEmitter) {
+            ((OpenAiChatStreamEmitter) sink).nextGeneration();
+            return sink;
+        }
+        if (sink instanceof ResponsesReasoningStreamEmitter) {
+            ((ResponsesReasoningStreamEmitter) sink).nextGeneration();
+            return sink;
+        }
+        return null;
     }
 
     private static String toolChoiceMode(CompletionRequest request) {
@@ -2995,8 +3543,35 @@ final class LocalApiGateway {
     private static void writeBufferedChatText(OutputStream out, String id, String model,
                                               String value)
             throws IOException, JSONException {
-        for (String chunk : stringChunks(value, 192)) {
-            writeChatChunk(out, id, model, null, chunk, null);
+        writePacedChatContent(out, id, model, value);
+    }
+
+    private static void writePacedChatContent(OutputStream out, String id, String model,
+                                              String value)
+            throws IOException, JSONException {
+        List<String> chunks = stringChunks(value, LIVE_SSE_SLICE_CHARS);
+        for (int index = 0; index < chunks.size(); index++) {
+            writeChatChunk(out, id, model, null, chunks.get(index), null);
+            paceLargeSsePatch(chunks.size(), index);
+        }
+    }
+
+    private static void writePacedChatReasoning(OutputStream out, String id, String model,
+                                                String value)
+            throws IOException, JSONException {
+        List<String> chunks = stringChunks(value, LIVE_SSE_SLICE_CHARS);
+        for (int index = 0; index < chunks.size(); index++) {
+            writeChatReasoningChunk(out, id, model, chunks.get(index));
+            paceLargeSsePatch(chunks.size(), index);
+        }
+    }
+
+    private static void paceLargeSsePatch(int count, int index) {
+        if (count <= 1 || index + 1 >= count) return;
+        try {
+            Thread.sleep(LIVE_SSE_SLICE_PACE_MS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -3010,11 +3585,15 @@ final class LocalApiGateway {
                     .put("type", "function").put("function", function);
             writeChatDelta(out, id, model,
                     new JSONObject().put("tool_calls", new JSONArray().put(tool)), null);
-            for (String arguments : stringChunks(call.arguments, 192)) {
+            List<String> argumentChunks = stringChunks(
+                    call.arguments, LIVE_SSE_SLICE_CHARS);
+            for (int part = 0; part < argumentChunks.size(); part++) {
+                String arguments = argumentChunks.get(part);
                 JSONObject continuation = new JSONObject().put("index", index)
                         .put("function", new JSONObject().put("arguments", arguments));
                 writeChatDelta(out, id, model,
                         new JSONObject().put("tool_calls", new JSONArray().put(continuation)), null);
+                paceLargeSsePatch(argumentChunks.size(), part);
             }
         }
     }
@@ -4127,7 +4706,7 @@ final class LocalApiGateway {
                     .put("listening", isRunning())
                     .put("endpoint", endpoint())
                     .put("protocol", protocolMode())
-                    .put("api_key_configured", apiKey != null)
+                    .put("api_key", apiKey == null ? JSONObject.NULL : apiKey)
                     .put("backend_ready", b != null && b.isReady())
                     .put("backend_status", b == null ? "not installed" : b.readinessDetail())
                     .put("received", receivedRequests.get())

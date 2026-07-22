@@ -53,6 +53,7 @@ javac -source 8 -target 8 -cp "$JSON_JAR:$ANDROID_JAR:libs/api.jar:build/classes
     tests/com/dsmod/probe/LocalApiGatewayProtocolRegressionTest.java \
     tests/com/dsmod/probe/LocalApiCoroutineCancellationRegressionTest.java \
     tests/com/dsmod/probe/NativeApiPatchDecoderRegressionTest.java \
+    tests/com/dsmod/probe/UiLanguagePolicyRegressionTest.java \
     src/com/dsmod/probe/LocalApiGateway.java \
     src/com/dsmod/probe/OpenAiToolBridge.java \
     src/com/dsmod/probe/OmniRouteToolBridge.java \
@@ -119,3 +120,8 @@ java -cp "$TEST_CP" \
 
 java -cp "$TEST_CP" \
     com.dsmod.probe.NativeApiPatchDecoderRegressionTest
+
+java -cp "$TEST_CP" \
+    com.dsmod.probe.UiLanguagePolicyRegressionTest
+
+./test-language-catalog.sh

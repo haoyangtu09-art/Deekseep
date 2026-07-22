@@ -155,10 +155,18 @@ public final class XposedActivationProvider extends ContentProvider {
         Bundle result = new Bundle();
         Context context = getContext();
         int callingUid = Binder.getCallingUid();
+        result.putBoolean("accepted",
+                recordTargetHeartbeat(context, callingUid, extras, "provider"));
+        return result;
+    }
+
+    /** Shared by the provider and the explicit-broadcast package-visibility fallback. */
+    static boolean recordTargetHeartbeat(Context context, int callingUid, Bundle extras,
+                                         String channel) {
         if (context == null || !uidOwnsPackage(context, callingUid, TARGET_PACKAGE)) {
-            Log.w(TAG, "rejected target heartbeat from uid=" + callingUid);
-            result.putBoolean("accepted", false);
-            return result;
+            Log.w(TAG, "rejected target heartbeat from uid=" + callingUid
+                    + ", channel=" + channel);
+            return false;
         }
         SharedPreferences.Editor edit = prefs(context).edit()
                 .putLong(KEY_TARGET_AT, System.currentTimeMillis());
@@ -169,10 +177,10 @@ public final class XposedActivationProvider extends ContentProvider {
                     extras.getLong("versionCode", 0L));
         }
         edit.apply();
-        result.putBoolean("accepted", true);
-        Log.i(TAG, "DeepSeek target heartbeat accepted, uid=" + callingUid);
+        Log.i(TAG, "DeepSeek target heartbeat accepted, uid=" + callingUid
+                + ", channel=" + channel);
         notifyStateChanged();
-        return result;
+        return true;
     }
 
     private static boolean uidOwnsPackage(Context context, int uid, String wanted) {

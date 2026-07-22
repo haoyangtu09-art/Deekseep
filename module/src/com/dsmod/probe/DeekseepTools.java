@@ -61,7 +61,7 @@ public final class DeekseepTools {
                 try {
                     act.runOnUiThread(new Runnable() {
                         public void run() {
-                            try { Toast.makeText(act, fmsg, Toast.LENGTH_LONG).show(); } catch (Throwable ignored) {}
+                            try { UiLanguage.toast(act, fmsg, Toast.LENGTH_LONG).show(); } catch (Throwable ignored) {}
                         }
                     });
                 } catch (Throwable ignored) {}
@@ -110,7 +110,9 @@ public final class DeekseepTools {
         StringBuilder sb = new StringBuilder();
         sb.append("# ").append(title == null || title.length() == 0 ? sid : title).append("\n\n");
         for (ChatEditorUi.Msg m : ChatEditorUi.loadThread(db, sid)) {
-            sb.append("USER".equals(m.role) ? "**用户**" : "**助手**").append("\n\n");
+            sb.append("USER".equals(m.role)
+                    ? UiLanguage.text("**用户**", "**User**")
+                    : UiLanguage.text("**助手**", "**Assistant**")).append("\n\n");
             if (m.think != null && m.think.length() > 0) {
                 for (String line : m.think.split("\n")) sb.append("> ").append(line).append("\n");
                 sb.append("\n");
@@ -122,7 +124,7 @@ public final class DeekseepTools {
 
     // ── 功能 1：导出全部会话为 Markdown ─────────────────────────────────
     static void exportAll(final Activity act) {
-        Toast.makeText(act, "正在导出…", Toast.LENGTH_SHORT).show();
+        UiLanguage.toast(act, "正在导出…", Toast.LENGTH_SHORT).show();
         runBg(act, new Job() {
             public String run() throws Throwable {
                 File base = exportBase(act);
@@ -226,6 +228,7 @@ public final class DeekseepTools {
             } });
         btns.addView(go, glp);
 
+        UiLanguage.localizeTree(act, box);
         dlg.setContentView(box);
         Window w = dlg.getWindow();
         if (w != null) {
@@ -238,7 +241,7 @@ public final class DeekseepTools {
 
     private static TextView pillButton(Activity act, String label, int fg, int bgColor) {
         TextView tv = new TextView(act);
-        tv.setText(label);
+        tv.setText(UiLanguage.dynamic(act, label));
         tv.setTextColor(fg);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         tv.setTypeface(Typeface.DEFAULT_BOLD);
@@ -254,7 +257,7 @@ public final class DeekseepTools {
     }
 
     private static void runSearch(final Activity act, final String kw) {
-        Toast.makeText(act, "搜索中…", Toast.LENGTH_SHORT).show();
+        UiLanguage.toast(act, "搜索中…", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             public void run() {
                 final List<Hit> hits = new ArrayList<Hit>();
@@ -315,7 +318,10 @@ public final class DeekseepTools {
         box.setBackground(bg);
 
         TextView h = new TextView(act);
-        h.setText(hits.isEmpty() ? "未找到「" + kw + "」" : "「" + kw + "」命中 " + hits.size() + " 条");
+        h.setText(hits.isEmpty()
+                ? UiLanguage.text(act, "未找到「" + kw + "」", "No results for “" + kw + "”")
+                : UiLanguage.text(act, "「" + kw + "」命中 " + hits.size() + " 条",
+                        hits.size() + " results for “" + kw + "”"));
         h.setTextColor(text); h.setTypeface(Typeface.DEFAULT_BOLD);
         h.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         h.setPadding(dp(act, 4), 0, dp(act, 4), dp(act, 10));
@@ -341,7 +347,8 @@ public final class DeekseepTools {
             row.setClickable(true);
 
             TextView tt = new TextView(act);
-            tt.setText((("USER".equals(hit.role)) ? "我 · " : "AI · ") + hit.title);
+            tt.setText(("USER".equals(hit.role)
+                    ? UiLanguage.text(act, "我 · ", "Me · ") : "AI · ") + hit.title);
             tt.setTextColor(sub); tt.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
             tt.setSingleLine(true); tt.setEllipsize(android.text.TextUtils.TruncateAt.END);
             row.addView(tt);
@@ -381,6 +388,7 @@ public final class DeekseepTools {
         clp.gravity = Gravity.END; clp.topMargin = dp(act, 4);
         box.addView(close, clp);
 
+        UiLanguage.localizeTree(act, box);
         dlg.setContentView(box);
         Window w = dlg.getWindow();
         if (w != null) {
@@ -393,7 +401,7 @@ public final class DeekseepTools {
 
     // ── 功能 3：数据库备份（手动 + 自动）────────────────────────────────
     static void backupNow(final Activity act) {
-        Toast.makeText(act, "正在备份…", Toast.LENGTH_SHORT).show();
+        UiLanguage.toast(act, "正在备份…", Toast.LENGTH_SHORT).show();
         runBg(act, new Job() {
             public String run() throws Throwable {
                 File base = new File(exportBase(act), "backup_" + stamp());
@@ -463,7 +471,7 @@ public final class DeekseepTools {
 
     // ── 功能 4：会话数据统计 ────────────────────────────────────────────
     static void showStats(final Activity act) {
-        Toast.makeText(act, "统计中…", Toast.LENGTH_SHORT).show();
+        UiLanguage.toast(act, "统计中…", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             public void run() {
                 Map<String, String> accounts = ChatEditorUi.loadAccountLabels();
@@ -493,16 +501,28 @@ public final class DeekseepTools {
                         if (d != null) try { d.close(); } catch (Throwable ig) {}
                     }
                     sessions += accSessions; msgs += accMsgs;
-                    perAcc.append("• ").append(label == null ? ChatEditorUi.uuidOf(f).substring(0, 8) : label)
-                            .append("：").append(accSessions).append(" 会话 / ").append(accMsgs).append(" 消息\n");
+                    perAcc.append("• ").append(label == null
+                                    ? ChatEditorUi.uuidOf(f).substring(0, 8) : label)
+                            .append(UiLanguage.text(act, "：", ": "))
+                            .append(accSessions)
+                            .append(UiLanguage.text(act, " 会话 / ", " chats / "))
+                            .append(accMsgs)
+                            .append(UiLanguage.text(act, " 消息\n", " messages\n"));
                 }
-                final String text = "本地账号数：" + chatDbs().size() + "\n"
-                        + "会话总数：" + sessions + "\n"
-                        + "消息总数：" + msgs + "\n"
-                        + "正文+思考总字数：" + chars + "\n\n"
-                        + "按账号：\n" + perAcc;
+                final String text = UiLanguage.text(act,
+                        "本地账号数：" + chatDbs().size() + "\n"
+                                + "会话总数：" + sessions + "\n"
+                                + "消息总数：" + msgs + "\n"
+                                + "正文+思考总字数：" + chars + "\n\n"
+                                + "按账号：\n" + perAcc,
+                        "Local accounts: " + chatDbs().size() + "\n"
+                                + "Total chats: " + sessions + "\n"
+                                + "Total messages: " + msgs + "\n"
+                                + "Body + reasoning characters: " + chars + "\n\n"
+                                + "By account:\n" + perAcc);
                 act.runOnUiThread(new Runnable() {
-                    public void run() { showScrollDialog(act, "会话数据统计", text); }
+                    public void run() { showScrollDialog(act,
+                            UiLanguage.text(act, "会话数据统计", "Chat data statistics"), text); }
                 });
             }
         }).start();
@@ -520,8 +540,8 @@ public final class DeekseepTools {
             tv.setTextIsSelectable(true);
             tv.setText(text);
             sv.addView(tv);
-            new AlertDialog.Builder(act).setTitle(title).setView(sv)
-                    .setPositiveButton("关闭", null).show();
+            new AlertDialog.Builder(act).setTitle(UiLanguage.dynamic(act, title)).setView(sv)
+                    .setPositiveButton(UiLanguage.text(act, "关闭", "Close"), null).show();
         } catch (Throwable ignored) {}
     }
 

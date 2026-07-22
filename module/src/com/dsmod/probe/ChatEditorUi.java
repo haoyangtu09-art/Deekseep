@@ -158,7 +158,7 @@ public final class ChatEditorUi {
     static void show(Activity act) {
         try { new Ctrl(act).open(); }
         catch (Throwable t) {
-            Toast.makeText(act, "无法打开聊天编辑器: " + t, Toast.LENGTH_LONG).show();
+            UiLanguage.toast(act, "无法打开聊天编辑器: " + t, Toast.LENGTH_LONG).show();
         }
     }
 
@@ -169,7 +169,7 @@ public final class ChatEditorUi {
             c.targetDbPath = dbPath; c.targetSid = sid; c.targetMsgId = msgId;
             c.open();
         } catch (Throwable t) {
-            Toast.makeText(act, "无法打开聊天编辑器: " + t, Toast.LENGTH_LONG).show();
+            UiLanguage.toast(act, "无法打开聊天编辑器: " + t, Toast.LENGTH_LONG).show();
         }
     }
 
@@ -1762,7 +1762,7 @@ public final class ChatEditorUi {
             card.setBackground(background);
 
             TextView titleView = new TextView(act);
-            titleView.setText(titleValue == null ? "" : titleValue);
+            titleView.setText(UiLanguage.dynamic(act, titleValue == null ? "" : titleValue));
             titleView.setTextColor(text);
             titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
             titleView.setTypeface(Typeface.DEFAULT_BOLD);
@@ -1782,6 +1782,7 @@ public final class ChatEditorUi {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             alp.topMargin = dp(14);
             card.addView(actions, alp);
+            UiLanguage.localizeTree(act, card);
             dialog.setContentView(card);
             return new Popup(dialog, card, body, actions);
         }
@@ -1789,7 +1790,7 @@ public final class ChatEditorUi {
         TextView popupButton(Popup popup, String label, boolean primary,
                              final PopupAction action) {
             TextView button = new TextView(act);
-            button.setText(label);
+            button.setText(UiLanguage.dynamic(act, label));
             button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             button.setTypeface(Typeface.DEFAULT_BOLD);
             button.setGravity(Gravity.CENTER);
@@ -1825,7 +1826,7 @@ public final class ChatEditorUi {
 
         TextView popupText(String value) {
             TextView message = new TextView(act);
-            message.setText(value);
+            message.setText(UiLanguage.dynamic(act, value));
             message.setTextColor(sub);
             message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             message.setLineSpacing(dp(2), 1f);
@@ -1861,7 +1862,8 @@ public final class ChatEditorUi {
             for (int i = 0; i < labels.length; i++) {
                 final int which = i;
                 TextView row = new TextView(act);
-                row.setText((i == selected ? "●  " : "○  ") + labels[i]);
+                row.setText((i == selected ? "●  " : "○  ")
+                        + UiLanguage.dynamic(act, labels[i]));
                 row.setTextColor(text);
                 row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
                 row.setPadding(dp(12), dp(13), dp(12), dp(13));
@@ -1890,7 +1892,7 @@ public final class ChatEditorUi {
 
         void open() {
             curDbFile = currentDb(act.getClassLoader());
-            if (curDbFile == null) { Toast.makeText(act, "未找到聊天数据库", Toast.LENGTH_LONG).show(); return; }
+            if (curDbFile == null) { UiLanguage.toast(act, "未找到聊天数据库", Toast.LENGTH_LONG).show(); return; }
             accounts = loadAccountLabels();
             // The host sidebar is often ahead of SQLite immediately after sending/creating a chat.
             // Capture it once per editor opening, as requested, then merge it with the DB directory.
@@ -1898,6 +1900,7 @@ public final class ChatEditorUi {
 
             dlg = new Dialog(act, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
             root = tablet ? buildTablet() : buildPhone();
+            UiLanguage.localizeTree(act, root);
             dlg.setContentView(root);
             Window w = dlg.getWindow();
             if (w != null) {
@@ -2078,8 +2081,10 @@ public final class ChatEditorUi {
 
         void updateAccountBtn() {
             String cur = accounts.get(uuidOf(curDbFile));
-            if (cur == null) cur = "当前账号";
-            accountBtn.setText("\uD83D\uDC64 " + cur + (showAll ? "（显示所有账号）" : "") + "  \u2304");
+            if (cur == null) cur = UiLanguage.text(act, "当前账号", "Current account");
+            accountBtn.setText("\uD83D\uDC64 " + cur + (showAll
+                    ? UiLanguage.text(act, "（显示所有账号）", " (all accounts)") : "")
+                    + "  \u2304");
         }
 
         void showAccountMenu() {
@@ -2100,7 +2105,7 @@ public final class ChatEditorUi {
 
         void showAppendMessageForm(final String role) {
             if (curSid == null || sessDb == null) {
-                Toast.makeText(act, "请先新建或选择一个对话", Toast.LENGTH_SHORT).show();
+                UiLanguage.toast(act, "请先新建或选择一个对话", Toast.LENGTH_SHORT).show();
                 return;
             }
             final Popup p = popup("USER".equals(role) ? "添加用户消息" : "添加 AI 回复", true);
@@ -2156,7 +2161,7 @@ public final class ChatEditorUi {
                 }, CREATE_SESSION_DEBOUNCE_MS);
             }
             if (sid == null) {
-                Toast.makeText(act, "新建对话失败，请确认数据库可写", Toast.LENGTH_LONG).show();
+                UiLanguage.toast(act, "新建对话失败，请确认数据库可写", Toast.LENGTH_LONG).show();
                 return;
             }
             lastCreatedConversationSid = sid;
@@ -2166,14 +2171,14 @@ public final class ChatEditorUi {
                 selectSession(created);
                 if (!tablet && drawerOpen) closeDrawer();
             }
-            Toast.makeText(act, "已新建空白对话，可在底部添加用户消息或 AI 回复",
+            UiLanguage.toast(act, "已新建空白对话，可在底部添加用户消息或 AI 回复",
                     Toast.LENGTH_LONG).show();
         }
 
         void appendCurrentMessage(String role, String content) {
             if (sessDb == null || curSid == null || curSession == null) return;
             if (curSnapshot != null && !curSnapshot.complete) {
-                Toast.makeText(act, "完整在线历史仍在加载，请稍后重新点选后再添加",
+                UiLanguage.toast(act, "完整在线历史仍在加载，请稍后重新点选后再添加",
                         Toast.LENGTH_LONG).show();
                 return;
             }
@@ -2223,7 +2228,7 @@ public final class ChatEditorUi {
                     sessDb.setTransactionSuccessful();
                 }
             } catch (Throwable ignored) {
-                Toast.makeText(act, "添加失败或在线历史刚刚更新，请重新点选对话后再试",
+                UiLanguage.toast(act, "添加失败或在线历史刚刚更新，请重新点选对话后再试",
                         Toast.LENGTH_LONG).show();
                 return;
             } finally {
@@ -2237,7 +2242,7 @@ public final class ChatEditorUi {
             loadSessionList();
             Session refreshed = findSession(keepSid, keepPath);
             if (refreshed != null) selectSession(refreshed);
-            Toast.makeText(act, "已追加到当前对话", Toast.LENGTH_SHORT).show();
+            UiLanguage.toast(act, "已追加到当前对话", Toast.LENGTH_SHORT).show();
         }
 
         String sessionKey(Session session) {
@@ -2255,19 +2260,23 @@ public final class ChatEditorUi {
         void updateSelectHeader() {
             if (selectBtn == null || deleteBtn == null || createBtn == null) return;
             if (!selectMode) {
-                selectBtn.setText("选择");
+                selectBtn.setText(UiLanguage.text(act, "选择", "Select"));
                 deleteBtn.setVisibility(View.GONE);
                 createBtn.setVisibility(View.VISIBLE);
-                if (historyTitle != null) historyTitle.setText("对话历史");
+                if (historyTitle != null) historyTitle.setText(
+                        UiLanguage.text(act, "对话历史", "Chat history"));
                 return;
             }
             int count = selectedSessionKeys.size();
-            selectBtn.setText("取消");
+            selectBtn.setText(UiLanguage.text(act, "取消", "Cancel"));
             createBtn.setVisibility(View.GONE);
             deleteBtn.setVisibility(View.VISIBLE);
-            deleteBtn.setText(count > 0 ? ("删除(" + count + ")") : "删除");
+            deleteBtn.setText(count > 0
+                    ? UiLanguage.text(act, "删除(" + count + ")", "Delete (" + count + ")")
+                    : UiLanguage.text(act, "删除", "Delete"));
             if (historyTitle != null) historyTitle.setText(count > 0
-                    ? ("已选择 " + count) : "选择对话");
+                    ? UiLanguage.text(act, "已选择 " + count, count + " selected")
+                    : UiLanguage.text(act, "选择对话", "Select chats"));
         }
 
         void exitSelectMode() {
@@ -2300,7 +2309,7 @@ public final class ChatEditorUi {
         void confirmDeleteSelected() {
             final int count = selectedSessionKeys.size();
             if (count <= 0) {
-                Toast.makeText(act, "先选择要删除的对话", Toast.LENGTH_SHORT).show();
+                UiLanguage.toast(act, "先选择要删除的对话", Toast.LENGTH_SHORT).show();
                 return;
             }
             showConfirmPopup("删除 " + count + " 个对话",
@@ -2363,7 +2372,7 @@ public final class ChatEditorUi {
                 message += "，未取得原生链路 " + nativeUnavailable + " 个";
             }
             if (failed > 0) message += "，本地失败 " + failed + " 个";
-            Toast.makeText(act, message, Toast.LENGTH_SHORT).show();
+            UiLanguage.toast(act, message, Toast.LENGTH_SHORT).show();
         }
 
         View buildContentPane(boolean phone) {
@@ -2493,7 +2502,7 @@ public final class ChatEditorUi {
 
         TextView messageActionButton(String label, boolean primary) {
             TextView button = new TextView(act);
-            button.setText(label);
+            button.setText(UiLanguage.dynamic(act, label));
             button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             button.setTypeface(Typeface.DEFAULT_BOLD);
             button.setGravity(Gravity.CENTER);
@@ -2581,7 +2590,8 @@ public final class ChatEditorUi {
             updateSelectHeader();
             if (sessions.isEmpty()) {
                 TextView empty = new TextView(act);
-                empty.setText("没有本地或已加载的对话");
+                empty.setText(UiLanguage.text(act,
+                        "没有本地或已加载的对话", "No local or loaded chats"));
                 empty.setTextColor(sub);
                 empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
                 empty.setGravity(Gravity.CENTER);
@@ -2618,7 +2628,8 @@ public final class ChatEditorUi {
                 LinearLayout texts = new LinearLayout(act);
                 texts.setOrientation(LinearLayout.VERTICAL);
                 TextView t = new TextView(act);
-                t.setText((s.title != null && s.title.trim().length() > 0) ? s.title : "未命名对话");
+                t.setText((s.title != null && s.title.trim().length() > 0) ? s.title
+                        : UiLanguage.text(act, "未命名对话", "Untitled chat"));
                 t.setSingleLine(true); t.setEllipsize(TextUtils.TruncateAt.END);
                 t.setTextColor(text); t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
                 texts.addView(t);
@@ -2650,7 +2661,7 @@ public final class ChatEditorUi {
         void clearContent() {
             msgContainer.removeAllViews();
             fields.clear();
-            titleEt.setText("聊天记录");
+            titleEt.setText(UiLanguage.text(act, "聊天记录", "Chat history"));
         }
 
         // ── 打开会话 ─────────────────────────────────────
@@ -2669,7 +2680,8 @@ public final class ChatEditorUi {
             sessDb = SQLiteDatabase.openDatabase(s.dbPath, null, SQLiteDatabase.OPEN_READWRITE);
             curSid = s.id; curSession = s;
             String title = (s.title != null && s.title.trim().length() > 0) ? s.title : "";
-            titleEt.setText(title.length() > 0 ? title : "未命名对话");
+            titleEt.setText(title.length() > 0 ? title
+                    : UiLanguage.text(act, "未命名对话", "Untitled chat"));
             Main.refreshNativeHistorySnapshot(s.id);
             List<Msg> local = loadThread(sessDb, s.id);
             int localVersion = localCacheVersion(sessDb, s.id);
@@ -2819,7 +2831,7 @@ public final class ChatEditorUi {
 
         void addPlaceholder(String txt) {
             TextView ph = new TextView(act);
-            ph.setText(txt);
+            ph.setText(UiLanguage.dynamic(act, txt));
             ph.setTextColor(sub); ph.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             ph.setGravity(Gravity.CENTER);
             ph.setPadding(dp(24), dp(60), dp(24), dp(24));
@@ -2838,14 +2850,16 @@ public final class ChatEditorUi {
                 final String label = (hasThink ? "已思考" : "添加思考内容")
                         + (elapsedLabel.length() > 0 ? (" · " + elapsedLabel + " 秒") : "");
                 final TextView head = new TextView(act);
-                head.setText("\u25B8 " + label);
+                head.setText("\u25B8 " + UiLanguage.dynamic(act, label));
                 head.setTextColor(sub); head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                 head.setPadding(dp(4), dp(6), dp(4), dp(4)); head.setClickable(true);
 
                 final MdEditText think = new MdEditText(act);
                 think.delHandler = delHandler;
                 think.setText(m.think == null ? "" : m.think);
-                think.setHint("在此输入思考内容（长按进入编辑）");
+                think.setHint(UiLanguage.text(act,
+                        "在此输入思考内容（长按进入编辑）",
+                        "Enter reasoning here (long-press to edit)"));
                 think.setTextColor(sub); think.setHintTextColor(sub);
                 think.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                 think.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
@@ -2872,14 +2886,15 @@ public final class ChatEditorUi {
                 elapsedRow.setOrientation(LinearLayout.HORIZONTAL);
                 elapsedRow.setGravity(Gravity.CENTER_VERTICAL);
                 TextView elapsedCaption = new TextView(act);
-                elapsedCaption.setText("思考用时（秒）");
+                elapsedCaption.setText(UiLanguage.text(act,
+                        "思考用时（秒）", "Reasoning time (seconds)"));
                 elapsedCaption.setTextColor(sub);
                 elapsedCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                 elapsedRow.addView(elapsedCaption, new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
                 final EditText elapsed = new EditText(act);
-                elapsed.setHint("例如 12.5");
+                elapsed.setHint(UiLanguage.text(act, "例如 12.5", "For example, 12.5"));
                 elapsed.setTextColor(sub); elapsed.setHintTextColor(sub);
                 elapsed.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                 elapsed.setSingleLine(true);
@@ -2909,7 +2924,8 @@ public final class ChatEditorUi {
                     public void onClick(View v) {
                         boolean showing = thinkArea.getVisibility() == View.VISIBLE;
                         thinkArea.setVisibility(showing ? View.GONE : View.VISIBLE);
-                        head.setText((showing ? "\u25B8 " : "\u25BE ") + label);
+                        head.setText((showing ? "\u25B8 " : "\u25BE ")
+                                + UiLanguage.dynamic(act, label));
                     }
                 });
                 LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
@@ -3004,8 +3020,12 @@ public final class ChatEditorUi {
                 names.append(image.label);
                 if (names.length() > 60) { names.append("…"); break; }
             }
-            String first = edit.selected.isEmpty() ? "图片 0 张 · 从相册添加"
-                    : ("图片 " + edit.selected.size() + " 张 · 相册 / 管理");
+            String first = edit.selected.isEmpty()
+                    ? UiLanguage.text(act, "图片 0 张 · 从相册添加",
+                            "0 images · Add from gallery")
+                    : UiLanguage.text(act,
+                            "图片 " + edit.selected.size() + " 张 · 相册 / 管理",
+                            edit.selected.size() + " images · Gallery / Manage");
             edit.summary.setText(names.length() == 0 ? first : first + "\n" + names);
         }
 
@@ -3033,7 +3053,7 @@ public final class ChatEditorUi {
 
         void showImageManager(final ImageEdit edit) {
             if (isCurrentSnapshotReadOnly()) {
-                Toast.makeText(act, "当前显示最新内存记录，等待 DeepSeek 落库后再修改图片",
+                UiLanguage.toast(act, "当前显示最新内存记录，等待 DeepSeek 落库后再修改图片",
                         Toast.LENGTH_LONG).show();
                 return;
             }
@@ -3147,7 +3167,7 @@ public final class ChatEditorUi {
 
         void pickGalleryForMessage(final ImageEdit edit) {
             if (isCurrentSnapshotReadOnly() || curSid == null) {
-                Toast.makeText(act, "当前记录还不能附加图片", Toast.LENGTH_LONG).show();
+                UiLanguage.toast(act, "当前记录还不能附加图片", Toast.LENGTH_LONG).show();
                 return;
             }
             final String targetSid = curSid;
@@ -3195,7 +3215,7 @@ public final class ChatEditorUi {
                                     edit.originalSignature = imageSelectionSignature(edit.selected);
                                     edit.edited = false;
                                     updateImageSummary(edit);
-                                    Toast.makeText(act, "图片已持久保存并附加到用户消息",
+                                    UiLanguage.toast(act, "图片已持久保存并附加到用户消息",
                                             Toast.LENGTH_LONG).show();
                                 }
                             });
@@ -3255,7 +3275,7 @@ public final class ChatEditorUi {
                             edit.originalSignature = imageSelectionSignature(edit.selected);
                             edit.edited = false;
                             updateImageSummary(edit);
-                            Toast.makeText(act, "图片已刷新并保存",
+                            UiLanguage.toast(act, "图片已刷新并保存",
                                     Toast.LENGTH_SHORT).show();
                         }
                     });
@@ -3277,7 +3297,7 @@ public final class ChatEditorUi {
         // ── 编辑 / 保存 ──────────────────────────────────
         void beginEdit(Field f) {
             if (isCurrentSnapshotReadOnly()) {
-                Toast.makeText(act, "当前显示最新内存记录，等待 DeepSeek 落库后再编辑",
+                UiLanguage.toast(act, "当前显示最新内存记录，等待 DeepSeek 落库后再编辑",
                         Toast.LENGTH_LONG).show();
                 return;
             }
@@ -3312,7 +3332,7 @@ public final class ChatEditorUi {
             }
             if (isCurrentSnapshotReadOnly()
                     && (!changedFields.isEmpty() || !changedImages.isEmpty())) {
-                Toast.makeText(act, "最新记录尚未落库，请重新打开编辑器后再保存",
+                UiLanguage.toast(act, "最新记录尚未落库，请重新打开编辑器后再保存",
                         Toast.LENGTH_LONG).show();
                 return;
             }
@@ -3333,13 +3353,13 @@ public final class ChatEditorUi {
                             }
                         }
                         if (!hasContent) {
-                            Toast.makeText(act, "请先输入思考内容，再设置思考用时", Toast.LENGTH_SHORT).show();
+                            UiLanguage.toast(act, "请先输入思考内容，再设置思考用时", Toast.LENGTH_SHORT).show();
                             return;
                         }
                     }
                 }
                 catch (Throwable ignored) {
-                    Toast.makeText(act, "思考用时必须是大于或等于 0 的秒数", Toast.LENGTH_SHORT).show();
+                    UiLanguage.toast(act, "思考用时必须是大于或等于 0 的秒数", Toast.LENGTH_SHORT).show();
                     return;
                 }
             }
@@ -3381,7 +3401,7 @@ public final class ChatEditorUi {
                         }
                     }
                 } catch (Throwable t) {
-                    Toast.makeText(act, "保存失败或在线历史已更新，请重新打开后再试", Toast.LENGTH_LONG).show();
+                    UiLanguage.toast(act, "保存失败或在线历史已更新，请重新打开后再试", Toast.LENGTH_LONG).show();
                     return;
                 } finally {
                     if (began) try { sessDb.endTransaction(); } catch (Throwable ignored) {}
@@ -3418,14 +3438,14 @@ public final class ChatEditorUi {
             }
             activeField = null;
             if (imm != null) imm.hideSoftInputFromWindow(root.getWindowToken(), 0);
-            Toast.makeText(act, n > 0 ? ("已保存 " + n + " 处，重启 DeepSeek 生效") : "无改动",
+            UiLanguage.toast(act, n > 0 ? ("已保存 " + n + " 处，重启 DeepSeek 生效") : "无改动",
                     Toast.LENGTH_SHORT).show();
         }
 
         // ── Markdown 格式化工具栏 ─────────────────────────
         void showMarkdownMenu() {
             if (activeField == null || activeField.et == null || !activeField.et.isFocusable()) {
-                Toast.makeText(act, "请先长按一条消息进入编辑，再插入格式", Toast.LENGTH_SHORT).show();
+                UiLanguage.toast(act, "请先长按一条消息进入编辑，再插入格式", Toast.LENGTH_SHORT).show();
                 return;
             }
             final Dialog sheet = new Dialog(act);
@@ -3466,6 +3486,7 @@ public final class ChatEditorUi {
             addMdEntry(list, sheet, "图片",         16, Typeface.NORMAL,      false, false, "image");
 
             sv.addView(list);
+            UiLanguage.localizeTree(act, sv);
             sheet.setContentView(sv);
             Window w = sheet.getWindow();
             if (w != null) {
@@ -3480,7 +3501,7 @@ public final class ChatEditorUi {
         void addMdEntry(LinearLayout parent, final Dialog sheet, String label, float sizeSp,
                         int style, boolean mono, boolean strike, final String kind) {
             TextView tv = new TextView(act);
-            tv.setText(label);
+            tv.setText(UiLanguage.dynamic(act, label));
             tv.setTextColor(text);
             tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
             if (mono) tv.setTypeface(Typeface.MONOSPACE, style);
@@ -3517,7 +3538,7 @@ public final class ChatEditorUi {
 
         EditText mkInput(String hint) {
             EditText e = new EditText(act);
-            e.setHint(hint);
+            e.setHint(UiLanguage.dynamic(act, hint));
             e.setTextColor(text);
             e.setHintTextColor(sub);
             e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);

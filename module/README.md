@@ -1,14 +1,15 @@
-# Stable API 102
+# Google Play API 102
 
-This is the recommended Deekseep project for a current LSPosed installation.
+This directory builds the Google Play DeepSeek 2.2.2 (`versionCode 236`) port
+for a current LSPosed installation.
 
-Current release: **1.7.1**.
+Current release: **1.7.2**.
 
 - Package: `com.dsmod.probe`
 - Interface: libxposed API 102
 - Metadata: `META-INF/xposed/`
 - Output: `ds-probe.apk`
-- Public asset: `deekseep-stable-api102-v1.7.1.apk`
+- Public asset: `deekseep-google-play-2.2.2-v1.7.2.apk`
 
 It contains the broadest maintained stable feature set, including the advanced
 chat editor with live refresh, persistent blank local conversations, direct

@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.util.TypedValue;
@@ -33,8 +34,20 @@ public final class DeekseepUi {
     }
 
     static boolean isDark(Context c) {
-        return (c.getResources().getConfiguration().uiMode
-                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        // Deekseep deliberately follows the device color scheme.  DeepSeek can maintain a
+        // separate in-app theme, so its wrapped Activity resources are not authoritative here.
+        try {
+            int systemMode = Resources.getSystem().getConfiguration().uiMode
+                    & Configuration.UI_MODE_NIGHT_MASK;
+            if (systemMode == Configuration.UI_MODE_NIGHT_YES) return true;
+            if (systemMode == Configuration.UI_MODE_NIGHT_NO) return false;
+        } catch (Throwable ignored) {}
+        try {
+            return c != null && (c.getResources().getConfiguration().uiMode
+                    & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     static void dismissForNativeNavigation() {
@@ -62,6 +75,9 @@ public final class DeekseepUi {
 
     /** 全屏 Dialog：顶部返回+标题，卡片含导入按钮/路径/还原/注入开关。 */
     static void showPage(final Activity act) {
+        // Re-read DeepSeek's MMKV language tag at the moment the page is opened.  This also covers
+        // hosts that change language without recreating or resuming their current Activity.
+        UiLanguage.refreshHost(act);
         boolean dark = isDark(act);
         int bgColor   = dark ? 0xFF1B1B1D : 0xFFF5F6F8;
         int barColor  = dark ? 0xFF232326 : 0xFFFFFFFF;
@@ -641,7 +657,23 @@ public final class DeekseepUi {
         card.addView(bkRow, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // ── Section 9: 实验性功能 ────────────────────────────────────────
+        // ── Section 9: language ──────────────────────────────────────────
+        card.addView(makeDivider(act, divColor));
+        card.addView(toolActionRow(act,
+                UiLanguage.text(act, "语言", "Language"),
+                UiLanguage.effectiveSummary(act), textColor, subColor,
+                new View.OnClickListener() {
+                    public void onClick(View v) {
+                        showLanguagePicker(act, new Runnable() {
+                            @Override public void run() {
+                                try { dlg.dismiss(); } catch (Throwable ignored) {}
+                                showPage(act);
+                            }
+                        });
+                    }
+                }));
+
+        // ── Section 10: 实验性功能 ───────────────────────────────────────
         card.addView(makeDivider(act, divColor));
         card.addView(toolActionRow(act, "实验性功能",
                 "专家模式图片中继、本地 API 服务及其独立帮助；首次进入需确认风险说明。",
@@ -649,7 +681,7 @@ public final class DeekseepUi {
                     public void onClick(View v) { showExperimentalEntry(act); }
                 }));
 
-        // ── Section 10: 帮助与问题（折叠手风琴）───────────────────────────
+        // ── Section 11: 帮助与问题（折叠手风琴）───────────────────────────
         card.addView(makeDivider(act, divColor));
         addHelpSection(act, card, textColor, subColor, divColor, dark);
 
@@ -657,6 +689,7 @@ public final class DeekseepUi {
         card.addView(makeDivider(act, divColor));
         addBuildFooter(act, card, subColor);
 
+        UiLanguage.localizeTree(act, root);
         dlg.setContentView(root);
         Window w = dlg.getWindow();
         if (w != null) {
@@ -791,16 +824,19 @@ public final class DeekseepUi {
                 if (!dialog.isShowing()) return;
                 remaining[0]--;
                 if (remaining[0] <= 0) {
-                    confirm.setText("确认并进入");
+                    confirm.setText(UiLanguage.text(act, "确认并进入", "Confirm and enter"));
                     confirm.setEnabled(true);
                     confirm.setAlpha(1f);
                 } else {
-                    confirm.setText("确认（" + remaining[0] + "）");
+                    confirm.setText(UiLanguage.text(act,
+                            "确认（" + remaining[0] + "）",
+                            "Confirm (" + remaining[0] + ")"));
                     confirm.postDelayed(this, 1000L);
                 }
             }
         };
 
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         dialog.show();
         Window window = dialog.getWindow();
@@ -934,6 +970,7 @@ public final class DeekseepUi {
         card.addView(makeDivider(act, divColor));
         addBuildFooter(act, card, subColor);
 
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         Window window = dialog.getWindow();
         if (window != null) {
@@ -1249,10 +1286,10 @@ public final class DeekseepUi {
         final Runnable refresh = new Runnable() {
             @Override public void run() {
                 if (!dialog.isShowing()) return;
-                backgroundStatus.setText(Main.localApiBackgroundStatus(act));
-                keepAliveStatus.setText(Main.localApiKeepAliveStatus());
-                connectionInfo.setText(Main.localApiConnectionInfo());
-                runtime.setText(Main.localApiRuntimeStatus());
+                backgroundStatus.setText(UiLanguage.dynamic(act, Main.localApiBackgroundStatus(act)));
+                keepAliveStatus.setText(UiLanguage.dynamic(act, Main.localApiKeepAliveStatus()));
+                connectionInfo.setText(UiLanguage.dynamic(act, Main.localApiConnectionInfo()));
+                runtime.setText(UiLanguage.dynamic(act, Main.localApiRuntimeStatus()));
                 runtime.postDelayed(this, 1000L);
             }
         };
@@ -1261,14 +1298,14 @@ public final class DeekseepUi {
                 boolean applied = Main.setLocalApiEnabled(checked);
                 if (checked && !applied) {
                     serviceSwitch.setChecked(false);
-                    feedback.setText("后台运行校验未通过，监听未启动");
+                    feedback.setText(UiLanguage.dynamic(act, "后台运行校验未通过，监听未启动"));
                 } else {
-                    feedback.setText(checked ? "正在启动监听…"
-                            : "服务已关闭，正在清理复用会话…");
+                    feedback.setText(UiLanguage.dynamic(act, checked ? "正在启动监听…"
+                            : "服务已关闭，正在清理复用会话…"));
                 }
-                connectionInfo.setText(Main.localApiConnectionInfo());
-                runtime.setText(Main.localApiRuntimeStatus());
-                keepAliveStatus.setText(Main.localApiKeepAliveStatus());
+                connectionInfo.setText(UiLanguage.dynamic(act, Main.localApiConnectionInfo()));
+                runtime.setText(UiLanguage.dynamic(act, Main.localApiRuntimeStatus()));
+                keepAliveStatus.setText(UiLanguage.dynamic(act, Main.localApiKeepAliveStatus()));
             }
         });
         openBattery.setOnClickListener(new View.OnClickListener() {
@@ -1276,18 +1313,20 @@ public final class DeekseepUi {
                 localApiSettingsFromPage = true;
                 if (!Main.openLocalApiBatterySettings(act)) {
                     localApiSettingsFromPage = false;
-                    feedback.setText("无法打开系统电池设置，请从系统应用设置手动进入");
+                    feedback.setText(UiLanguage.dynamic(act,
+                            "无法打开系统电池设置，请从系统应用设置手动进入"));
                 }
             }
         });
         verifyBattery.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 boolean allowed = Main.verifyLocalApiBackground(act);
-                backgroundStatus.setText(Main.localApiBackgroundStatus(act));
-                feedback.setText(allowed ? "后台运行校验通过" : "校验未通过，请设为不限制后台活动");
-                connectionInfo.setText(Main.localApiConnectionInfo());
-                runtime.setText(Main.localApiRuntimeStatus());
-                keepAliveStatus.setText(Main.localApiKeepAliveStatus());
+                backgroundStatus.setText(UiLanguage.dynamic(act, Main.localApiBackgroundStatus(act)));
+                feedback.setText(UiLanguage.dynamic(act, allowed
+                        ? "后台运行校验通过" : "校验未通过，请设为不限制后台活动"));
+                connectionInfo.setText(UiLanguage.dynamic(act, Main.localApiConnectionInfo()));
+                runtime.setText(UiLanguage.dynamic(act, Main.localApiRuntimeStatus()));
+                keepAliveStatus.setText(UiLanguage.dynamic(act, Main.localApiKeepAliveStatus()));
             }
         });
         protocolValue.setOnClickListener(new View.OnClickListener() {
@@ -1295,11 +1334,12 @@ public final class DeekseepUi {
                 showProtocolPicker(act, new Runnable() {
                     @Override public void run() {
                         protocolValue.setText(localApiProtocolDisplayName() + "  \u203A");
-                        protocolDescription.setText(localApiProtocolDescription());
-                        agentHelp.setText(localApiAgentHelp());
-                        connectionInfo.setText(Main.localApiConnectionInfo());
-                        runtime.setText(Main.localApiRuntimeStatus());
-                        feedback.setText("已切换为 " + localApiProtocolDisplayName() + " 格式");
+                        protocolDescription.setText(UiLanguage.dynamic(act, localApiProtocolDescription()));
+                        agentHelp.setText(UiLanguage.dynamic(act, localApiAgentHelp()));
+                        connectionInfo.setText(UiLanguage.dynamic(act, Main.localApiConnectionInfo()));
+                        runtime.setText(UiLanguage.dynamic(act, Main.localApiRuntimeStatus()));
+                        feedback.setText(UiLanguage.dynamic(act,
+                                "已切换为 " + localApiProtocolDisplayName() + " 格式"));
                     }
                 });
             }
@@ -1307,31 +1347,32 @@ public final class DeekseepUi {
         copyUrl.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 copyText(act, "API URL", Main.localApiEndpoint());
-                feedback.setText("URL 已复制");
+                feedback.setText(UiLanguage.dynamic(act, "URL 已复制"));
             }
         });
         copyKey.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 copyText(act, "API Key", Main.localApiKey());
-                feedback.setText("API Key 已复制");
+                feedback.setText(UiLanguage.dynamic(act, "API Key 已复制"));
             }
         });
         saveKey.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 String result = Main.setCustomLocalApiKey(act, customKey.getText().toString());
-                feedback.setText(result);
-                connectionInfo.setText(Main.localApiConnectionInfo());
+                feedback.setText(UiLanguage.dynamic(act, result));
+                connectionInfo.setText(UiLanguage.dynamic(act, Main.localApiConnectionInfo()));
             }
         });
         randomKey.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 Main.rotateLocalApiKey(act);
                 customKey.setText(Main.localApiKey());
-                connectionInfo.setText(Main.localApiConnectionInfo());
-                feedback.setText("已生成并启用新的随机 Key");
+                connectionInfo.setText(UiLanguage.dynamic(act, Main.localApiConnectionInfo()));
+                feedback.setText(UiLanguage.dynamic(act, "已生成并启用新的随机 Key"));
             }
         });
 
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         Window window = dialog.getWindow();
         if (window != null) {
@@ -1390,7 +1431,8 @@ public final class DeekseepUi {
     private static TextView protocolPickerOption(Activity act, String title, String description,
                                                  boolean selected, boolean dark) {
         TextView option = new TextView(act);
-        option.setText(title + (selected ? "   ✓" : "") + "\n" + description);
+        option.setText(UiLanguage.dynamic(act,
+                title + (selected ? "   ✓" : "") + "\n" + description));
         option.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         option.setTextColor(dark ? 0xFFECECEC : 0xFF1A1A1A);
         option.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
@@ -1405,6 +1447,95 @@ public final class DeekseepUi {
                 : (dark ? 0xFF4A4A50 : 0xFFD8DCE5));
         option.setBackground(background);
         return option;
+    }
+
+    private static void showLanguagePicker(final Activity act, final Runnable onChanged) {
+        if (act == null || act.isFinishing()) return;
+        final boolean dark = isDark(act);
+        final Dialog dialog = new Dialog(act);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
+
+        LinearLayout root = new LinearLayout(act);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(act, 18), dp(act, 16), dp(act, 18), dp(act, 18));
+        GradientDrawable rootBg = new GradientDrawable();
+        rootBg.setColor(dark ? 0xFF2A2A2D : 0xFFFFFFFF);
+        rootBg.setCornerRadius(dp(act, 18));
+        root.setBackground(rootBg);
+
+        TextView title = new TextView(act);
+        title.setText(UiLanguage.text(act, "选择 Deekseep 语言", "Choose Deekseep language"));
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(dark ? 0xFFECECEC : 0xFF1A1A1A);
+        title.setPadding(0, 0, 0, dp(act, 12));
+        root.addView(title);
+
+        final String current = UiLanguage.currentMode(act);
+        TextView automatic = protocolPickerOption(act,
+                UiLanguage.text(act, "跟随 DeepSeek（自动）", "Follow DeepSeek (Auto)"),
+                UiLanguage.text(act,
+                        "DeepSeek 为中文时使用中文；其他任何语言使用英文。",
+                        "Use Chinese when DeepSeek is Chinese; use English for every other language."),
+                UiLanguage.MODE_AUTO.equals(current), dark);
+        TextView chinese = protocolPickerOption(act, "Chinese",
+                UiLanguage.text(act, "始终显示中文", "Always display Chinese"),
+                UiLanguage.MODE_CHINESE.equals(current), dark);
+        TextView english = protocolPickerOption(act, "English",
+                UiLanguage.text(act, "始终显示英文", "Always display English"),
+                UiLanguage.MODE_ENGLISH.equals(current), dark);
+        root.addView(automatic, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams optionLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        optionLp.topMargin = dp(act, 10);
+        root.addView(chinese, optionLp);
+        LinearLayout.LayoutParams englishLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        englishLp.topMargin = dp(act, 10);
+        root.addView(english, englishLp);
+
+        View.OnClickListener choose = new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                String requested = view.getTag() instanceof String
+                        ? (String) view.getTag() : UiLanguage.MODE_AUTO;
+                if (!UiLanguage.setMode(act, requested)) {
+                    showCustomConfirm(act,
+                            UiLanguage.text(act, "语言设置保存失败", "Could not save language"),
+                            UiLanguage.text(act,
+                                    "DeepSeek 私有目录暂时不可写，请完整重启后重试。",
+                                    "DeepSeek's private directory is temporarily unavailable. Fully restart the app and try again."),
+                            null, UiLanguage.text(act, "知道了", "Got it"),
+                            true, null, null);
+                    return;
+                }
+                dialog.dismiss();
+                if (onChanged != null) onChanged.run();
+            }
+        };
+        automatic.setTag(UiLanguage.MODE_AUTO);
+        chinese.setTag(UiLanguage.MODE_CHINESE);
+        english.setTag(UiLanguage.MODE_ENGLISH);
+        automatic.setOnClickListener(choose);
+        chinese.setOnClickListener(choose);
+        english.setOnClickListener(choose);
+
+        UiLanguage.localizeTree(act, root);
+        dialog.setContentView(root);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000));
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            android.view.WindowManager.LayoutParams attrs = window.getAttributes();
+            attrs.dimAmount = 0.42f;
+            window.setAttributes(attrs);
+            int width = act.getResources().getDisplayMetrics().widthPixels - dp(act, 48);
+            window.setLayout(Math.max(dp(act, 280), width),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
     }
 
     private static void showProtocolPicker(final Activity act, final Runnable onChanged) {
@@ -1453,6 +1584,7 @@ public final class DeekseepUi {
                 if (onChanged != null) onChanged.run();
             }
         });
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         dialog.show();
         Window window = dialog.getWindow();
@@ -1470,7 +1602,7 @@ public final class DeekseepUi {
 
     private static TextView sectionTitle(Context context, String value, int color) {
         TextView title = new TextView(context);
-        title.setText(value);
+        title.setText(UiLanguage.dynamic(context, value));
         title.setTextColor(color);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -1480,7 +1612,7 @@ public final class DeekseepUi {
 
     private static TextView infoBox(Context context, String value, int color, boolean dark) {
         TextView info = new TextView(context);
-        info.setText(value);
+        info.setText(UiLanguage.dynamic(context, value));
         info.setTextColor(color);
         info.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         info.setTextIsSelectable(true);
@@ -1547,7 +1679,7 @@ public final class DeekseepUi {
         panel.addView(warning, warningLp);
 
         final TextView info = new TextView(act);
-        info.setText(Main.localApiConnectionInfo());
+        info.setText(UiLanguage.dynamic(act, Main.localApiConnectionInfo()));
         info.setTextColor(textColor);
         info.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         info.setTextIsSelectable(true);
@@ -1577,7 +1709,7 @@ public final class DeekseepUi {
                 if (clipboard != null) {
                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText(
                             "Deekseep Local API", Main.localApiConnectionInfo()));
-                    copy.setText("已复制");
+                    copy.setText(UiLanguage.dynamic(act, "已复制"));
                 }
             }
         });
@@ -1590,8 +1722,8 @@ public final class DeekseepUi {
         actions.addView(rotate, rotateLp);
         rotate.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                info.setText(Main.rotateLocalApiKey(act));
-                copy.setText("复制连接信息");
+                info.setText(UiLanguage.dynamic(act, Main.rotateLocalApiKey(act)));
+                copy.setText(UiLanguage.dynamic(act, "复制连接信息"));
             }
         });
 
@@ -1613,11 +1745,14 @@ public final class DeekseepUi {
         dialog.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {
             public void onDismiss(android.content.DialogInterface d) {
                 if (pageStatus != null) {
-                    pageStatus.setText("监听本机与局域网地址，所有业务请求均需 API Key；支持非流式/SSE。"
-                            + "点本行查看地址、密钥与连接方法。\n" + Main.localApiConnectionInfo());
+                    pageStatus.setText(UiLanguage.dynamic(act,
+                            "监听本机与局域网地址，所有业务请求均需 API Key；支持非流式/SSE。"
+                            + "点本行查看地址、密钥与连接方法。\n"
+                            + Main.localApiConnectionInfo()));
                 }
             }
         });
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         dialog.show();
         Window window = dialog.getWindow();
@@ -1630,7 +1765,7 @@ public final class DeekseepUi {
 
     private static TextView dialogAction(Context context, String label, int color, boolean dark) {
         TextView button = new TextView(context);
-        button.setText(label);
+        button.setText(UiLanguage.dynamic(context, label));
         button.setTextColor(color);
         button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         button.setTypeface(Typeface.DEFAULT_BOLD);
@@ -1668,13 +1803,13 @@ public final class DeekseepUi {
         LinearLayout labels = new LinearLayout(act);
         labels.setOrientation(LinearLayout.VERTICAL);
         TextView t = new TextView(act);
-        t.setText(title);
+        t.setText(UiLanguage.dynamic(act, title));
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         t.setTextColor(textColor);
         labels.addView(t, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView d = new TextView(act);
-        d.setText(desc);
+        d.setText(UiLanguage.dynamic(act, desc));
         d.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         d.setTextColor(subColor);
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
@@ -1754,7 +1889,7 @@ public final class DeekseepUi {
         bar.addView(back, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(act, 40)));
         TextView title = new TextView(act);
-        title.setText(pageTitle);
+        title.setText(UiLanguage.dynamic(act, pageTitle));
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextColor(textColor);
@@ -1777,6 +1912,7 @@ public final class DeekseepUi {
         cardLp.setMargins(dp(act, 16), dp(act, 16), dp(act, 16), dp(act, 16));
         scroll.addView(card, cardLp);
         buildAccordionItems(act, card, textColor, subColor, divColor, hint, items);
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         Window window = dialog.getWindow();
         if (window != null) {
@@ -1802,7 +1938,7 @@ public final class DeekseepUi {
                                             final int textColor, final int subColor,
                                             int divColor, String hint, final String[][] items) {
         TextView headerHint = new TextView(act);
-        headerHint.setText(hint);
+        headerHint.setText(UiLanguage.dynamic(act, hint));
         headerHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         headerHint.setTextColor(subColor);
         headerHint.setPadding(dp(act, 16), dp(act, 14), dp(act, 16), dp(act, 8));
@@ -1817,7 +1953,7 @@ public final class DeekseepUi {
             titleRow.setPadding(dp(act, 16), dp(act, 14), dp(act, 16), dp(act, 14));
             titleRow.setClickable(true);
             TextView itemTitle = new TextView(act);
-            itemTitle.setText(items[i][0]);
+            itemTitle.setText(UiLanguage.dynamic(act, items[i][0]));
             itemTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
             itemTitle.setTextColor(textColor);
             titleRow.addView(itemTitle, new LinearLayout.LayoutParams(
@@ -1829,7 +1965,7 @@ public final class DeekseepUi {
             titleRow.addView(arrow);
             card.addView(titleRow);
             TextView itemBody = new TextView(act);
-            itemBody.setText(items[i][1]);
+            itemBody.setText(UiLanguage.dynamic(act, items[i][1]));
             itemBody.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             itemBody.setTextColor(subColor);
             itemBody.setLineSpacing(dp(act, 2), 1f);
@@ -1868,10 +2004,10 @@ public final class DeekseepUi {
 
     private static void addBuildFooter(Activity act, LinearLayout card, int subColor) {
         TextView info = new TextView(act);
-        info.setText("模块版本：" + BuildInfo.MODULE_VERSION
+        info.setText(UiLanguage.dynamic(act, "模块版本：" + BuildInfo.MODULE_VERSION
                 + "\nlibxposed API：" + BuildInfo.API_VERSION
                 + "\n编译时间：" + BuildInfo.BUILD_DATE
-                + "\nDeepSeek 版本：" + installedVersion(act, act.getPackageName()));
+                + "\nDeepSeek 版本：" + installedVersion(act, act.getPackageName())));
         info.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         info.setTextColor(subColor);
         info.setGravity(Gravity.CENTER);
@@ -1959,6 +2095,7 @@ public final class DeekseepUi {
 
         buildHelpAccordion(act, hcard, textColor, subColor, divColor, dark);
 
+        UiLanguage.localizeTree(act, root);
         dlg.setContentView(root);
         Window w = dlg.getWindow();
         if (w != null) {
@@ -1992,6 +2129,9 @@ public final class DeekseepUi {
 
         // {标题, 正文}
         final String[][] items = {
+            {"【功能】语言自动检测与手动选择",
+                "默认在每次 DeepSeek 启动或回到前台时读取宿主当前语言：中文使用中文，任何其他语言使用英文。"
+                + "也可在 Deekseep 首页的“语言”中固定为 Chinese 或 English；选择“跟随 DeepSeek（自动）”可恢复自动检测。"},
             {"【功能】系统提示词注入",
                 "选择完整的 TXT/MD 文本后开启开关，模块会在发送请求时把它作为系统指令附加到用户原文前。"
                 + "在线历史、数据库写入和旧数据迁移会清理这段包装，因此正常聊天页只应显示用户真正输入的内容。"},
@@ -2108,7 +2248,7 @@ public final class DeekseepUi {
             titleRow.setFocusable(true);
 
             TextView t = new TextView(act);
-            t.setText(items[i][0]);
+            t.setText(UiLanguage.dynamic(act, items[i][0]));
             t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
             t.setTextColor(textColor);
             titleRow.addView(t, new LinearLayout.LayoutParams(
@@ -2125,7 +2265,7 @@ public final class DeekseepUi {
 
             // 正文（默认收起）
             TextView body = new TextView(act);
-            body.setText(items[i][1]);
+            body.setText(UiLanguage.dynamic(act, items[i][1]));
             body.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             body.setTextColor(subColor);
             body.setLineSpacing(dp(act, 2), 1f);
@@ -2222,7 +2362,7 @@ public final class DeekseepUi {
         root.setBackground(rootBg);
 
         TextView title = new TextView(act);
-        title.setText(titleText == null ? "提示" : titleText);
+        title.setText(UiLanguage.dynamic(act, titleText == null ? "提示" : titleText));
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextColor(textColor);
@@ -2236,7 +2376,7 @@ public final class DeekseepUi {
             }
         };
         TextView message = new TextView(act);
-        message.setText(messageText == null ? "" : messageText);
+        message.setText(UiLanguage.dynamic(act, messageText == null ? "" : messageText));
         message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         message.setTextColor(subColor);
         message.setLineSpacing(dp(act, 2), 1f);
@@ -2275,6 +2415,7 @@ public final class DeekseepUi {
         root.addView(buttons, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        UiLanguage.localizeTree(act, root);
         dialog.setContentView(root);
         dialog.show();
         Window window = dialog.getWindow();
@@ -2292,7 +2433,7 @@ public final class DeekseepUi {
 
     private static TextView popupButton(Activity act, String label, int textColor, int bgColor) {
         TextView button = new TextView(act);
-        button.setText(label);
+        button.setText(UiLanguage.dynamic(act, label));
         button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         button.setTypeface(Typeface.DEFAULT_BOLD);
         button.setTextColor(textColor);

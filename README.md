@@ -9,12 +9,12 @@
 > **Google Play 实验分支 / Experimental Google Play branch**
 >
 > 此 `google-play` 分支只针对 **Google Play DeepSeek 2.2.2
-> (`versionCode 236`)**。当前实机测试包为 **`1.7.1-gplay.5`**，已恢复专家模式、
+> (`versionCode 236`)**。当前实机测试包为 **`1.7.2`**，已恢复专家模式、
 > 图片上传/视觉中继、响应覆盖保护，以及 OpenAI/Anthropic 本地 API。它仍是按精确
 > APK 混淆表适配的实验版本；使用前请备份聊天和账号数据。
 >
 > This branch targets only **Google Play DeepSeek 2.2.2 (`versionCode 236`)**.
-> Device build **`1.7.1-gplay.5`** restores expert mode, image upload/vision
+> Device build **`1.7.2`** restores expert mode, image upload/vision
 > relay, response-preservation guards, and the OpenAI/Anthropic local API. It is
 > still an exact-APK experimental port; back up chat and account data first.
 
@@ -39,11 +39,10 @@ the traditional-Xposed directories remain mainland reference code.
 
 ## Google Play build
 
-The current branch build is **`1.7.1-gplay.5`**, using the modern libxposed API
-102 interface under [`module/`](module/). The normal `v1.7.1` GitHub release
-assets are mainland-China builds and must not be installed on the Google Play
-client. Until a separate Google Play prerelease is published, build this branch
-locally and keep the resulting APK separate from the stable mainland package.
+The current branch build is **`1.7.2`**, using the modern libxposed API 102
+interface under [`module/`](module/). Download the explicitly labelled Google
+Play asset from the `v1.7.2-google-play` prerelease; the normal `v1.7.1` assets
+use the separate mainland symbol map and are not interchangeable with this build.
 
 The Google Play port retains the gated **Experimental Features** page, its
 five-second first-entry disclosure, and separate help. Modern and legacy APKs
@@ -93,7 +92,7 @@ See the [stable interface guide](docs/VARIANTS.md) and dedicated
 - Experimental target: Google Play DeepSeek Android 2.2.2 (`versionCode 236`)
   with the inspected APKS fingerprint documented in
   [Google Play port status](docs/GOOGLE_PLAY.md).
-- Device-verified in `1.7.1-gplay.5`: native settings entry, expert selection,
+- Device-verified in `1.7.2`: native settings entry, expert selection,
   image picker/upload/vision relay, response-preservation hook chain, OpenAI
   Chat/Responses (including SSE), Anthropic Messages, and an isolated Codex
   Responses tool loop.
@@ -116,8 +115,8 @@ permanent guarantee.
 
 1. Confirm that DeepSeek is the Google Play 2.2.2 build (`versionCode 236`).
 2. Back up the DeepSeek chat database.
-3. Build `module/` from this branch, or use an explicitly labelled Google Play
-   prerelease asset when one exists. Do not use the normal mainland `v1.7.1` APK.
+3. Build `module/` from this branch, or download the explicitly labelled Google
+   Play 2.2.2 asset from `v1.7.2-google-play`. Do not use a mainland APK.
 4. Install it and enable it in the matching Xposed framework.
 5. Select `com.deepseek.chat` in scope. Modern libxposed does not require or
    support self-hooking the module application.
